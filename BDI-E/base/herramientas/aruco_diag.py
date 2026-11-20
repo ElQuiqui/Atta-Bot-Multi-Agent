@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-aruco_diag.py — ¿cuánto titila cada marker, y dónde? Diagnóstico con la cámara real
+aruco_diag.py — cuánto titila cada marcador y dónde: diagnóstico con la cámara real
 
-Abre la cámara con la MISMA configuración que la base (configSystem.json:
-índice, resolución, exposición, foco, calibración) y el MISMO detector, sin red
-y sin robots registrados. Durante N segundos cuenta, por marker:
-  · % de cuadros detectado por la pasada general
-  · % con la recuperación por ROI de la base V2
+Abre la cámara con la misma configuración que la base (configSystem.json:
+índice, resolución, exposición, foco, calibración) y el mismo detector, sin red
+y sin robots registrados. Durante N segundos cuenta, por marcador:
+  · porcentaje de cuadros en que lo detecta la pasada general
+  · porcentaje con la recuperación por región de interés de la base
   · la racha más larga sin verlo (lo que de verdad deja a un robot sin pose)
-  · el lado del marker en píxeles (menos de ~30 px ya es frágil)
-Guarda en herramientas/aruco_diag/ el cuadro en que más markers faltaban, con
-los rechazados del detector dibujados: ahí se ve si es reflejo, desenfoque o
-tamaño.
+  · el lado del marcador en píxeles (menos de ~30 px ya es frágil)
+Guarda en herramientas/aruco_diag/ el cuadro en que más marcadores faltaban,
+con los candidatos rechazados del detector dibujados, para ver si la causa es
+un reflejo, el desenfoque o el tamaño.
 
     cd base
-    python3 herramientas/aruco_diag.py            # 30 s, los markers que aparezcan
-    python3 herramientas/aruco_diag.py 60 2 3     # 60 s, vigilando los markers 2 y 3
+    python3 herramientas/aruco_diag.py            # 30 s, los marcadores que aparezcan
+    python3 herramientas/aruco_diag.py 60 2 3     # 60 s, vigilando los marcadores 2 y 3
 
-⚠ Cerrá la GUI/base antes: la cámara solo la puede abrir un proceso.
+Hay que cerrar la GUI y la base antes: la cámara solo la puede abrir un proceso.
 """
 import json
 import os

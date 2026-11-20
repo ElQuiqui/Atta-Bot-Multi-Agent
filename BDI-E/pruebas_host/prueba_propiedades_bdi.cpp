@@ -1,6 +1,7 @@
-// Prueba de las cuatro propiedades BDI (Cap. 5, sec. 5.1.6 del informe).
-// Corre en el host contra firmware/bdi.h, el MISMO header que se flashea
-// (sin dependencias de Arduino). No toca el ciclo: solo lo alimenta.
+// Prueba de las cuatro propiedades que distinguen al agente BDI de una máquina
+// de estados (ver la cabecera de bdi.h). Corre en la PC contra firmware/bdi.h,
+// el mismo encabezado que se programa en el robot, y no modifica el ciclo:
+// solo lo alimenta.
 //   g++ -std=c++17 -O1 -I../firmware prueba_propiedades_bdi.cpp -o prueba_propiedades_bdi && ./prueba_propiedades_bdi
 #include <cstdio>
 #include <cstring>
@@ -47,8 +48,8 @@ int main() {
 
     printf("Propiedad 1: disparador y contexto se evaluan por separado\n");
     {
-        // Biblioteca = la desplegada + un plan con GUARDA DE CONTEXTO propia
-        // (obstáculo al frente) y el mismo disparador (llegada a la celda).
+        // Biblioteca = la desplegada + un plan con guarda de contexto propia
+                // (obstáculo al frente) y el mismo disparador (llegada a la celda).
         static Plan lib[kPlanCount + 1];
         std::memcpy(lib, kPlanLibrary, sizeof(kPlanLibrary));
         lib[kPlanCount] = { "P_RODEAR", D_EXPLORAR, trLlegada, ctxObstaculo, bdRodear, 50 };
@@ -116,7 +117,7 @@ int main() {
                 CHECK(d1 == d0 && d2 == d1, "ciego: no la suelta aunque la meta ya este cubierta");
             }
         }
-        // La intencion lograda se suelta.
+        // La intención lograda se suelta.
         preparar(a, COMMIT_SINGLE_MINDED);
         a.Cycle(T += 100);
         const int meta = a.intention.goalCell;
@@ -134,14 +135,14 @@ int main() {
         a.Cycle(T += 100);
         const char* antes = a.intention.planName;
         Desire d0 = a.desire;
-        a.OnSensors(false, false, false, true);  // bateria baja
+        a.OnSensors(false, false, false, true);  // batería baja
         Action act = a.Cycle(T += 100);
         printf("        antes: %s (%s) ; con bateria baja: %s (%s), accion=%d\n",
                antes, kDesireName[d0], a.intention.planName, kDesireName[a.desire], (int)act.kind);
         CHECK(a.desire == D_SEGURO && std::strcmp(a.intention.planName, "P_ABORTAR") == 0 &&
               act.kind == Action::A_ABORT,
               "bateria baja: D_SEGURO interrumpe la intencion aun con compromiso ciego");
-        // Objetivo conocido durante la exploracion: CONGREGAR (60) le gana a EXPLORAR (40).
+        // Objetivo conocido durante la exploración: CONGREGAR (60) le gana a EXPLORAR (40).
         preparar(a, COMMIT_BLIND);
         a.Cycle(T += 100);
         a.OnTargetReport(a.roster.epoch, 2, 1200, 800, T);

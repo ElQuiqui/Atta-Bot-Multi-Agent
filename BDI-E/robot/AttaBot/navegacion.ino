@@ -14,20 +14,18 @@
 // NAVEGACIÓN REACTIVA UNIFICADA — GT y Congregación
 // ============================================================================
 
-// Ángulo del slot del anillo de congregación, seguro contra paredes y sin
-// colisiones entre slots. Determinista con datos que TODOS los seguidores
-// comparten (pose del líder, n, arena vía NAV_CONFIG|ARENA): cada uno calcula
-// el MISMO anillo y toma el ángulo de su índice, así que la repartición es
-// descentralizada y no hace falta negociar.
+// Ángulo de la ranura del anillo de congregación, seguro contra paredes y sin
+// colisiones entre ranuras. Es determinista con datos que todos los seguidores
+// comparten (pose del líder, n y arena vía NAV_CONFIG|ARENA): cada uno calcula
+// el mismo anillo y toma el ángulo de su índice, así que el reparto es
+// descentralizado y no hace falta negociar.
 //
-// Por qué no corregir solo el ángulo propio: la versión greedy rotaba cada slot
-// invasor hacia el lado libre por separado y los ENCIMABA. Medido el 2026-07-27
-// con el líder a 311mm de la pared, 5 de 9 slots quedaron a 31-62mm entre sí y
-// el enjambre nunca asentó. Acá los n slots se reparten parejos sobre el arco
-// seguro más largo, y si ese arco no alcanza para n cuerpos (MIN_ARC cada uno)
-// el radio crece hasta que sí.
+// No basta con corregir solo el ángulo propio: rotar cada ranura invasora por
+// separado hacia el lado libre las encima. Aquí las n ranuras se reparten
+// parejas sobre el arco seguro más largo, y si ese arco no alcanza para n
+// cuerpos (MIN_ARC cada uno), el radio crece hasta que sí.
 //
-// Con n==1 (useBearing) se respeta el bearing líder→robot si cae dentro del
+// Con n == 1 (useBearing) se respeta el rumbo líder→robot si cae dentro del
 // arco, que es el recorrido mínimo; si no, se va al extremo más cercano.
 // Escribe el radio efectivo en *outR, que puede ser mayor que el nominal.
 float SafeRingSlotAngle(float lx, float ly, int idx, int n, float nominalR,
@@ -86,11 +84,11 @@ float SafeRingSlotAngle(float lx, float ly, int idx, int n, float nominalR,
 }
 
 // Agrega la pose actual del líder a la ventana móvil y devuelve la promediada
-// por referencia. La cámara le mete σ≈10mm y σ≈3.8° (medido el 2026-07-27 sobre
-// un robot quieto) y ese ruido se propagaba tal cual al goal de cada seguidor.
-// El ángulo se promedia por seno/coseno para no romperse en el wrap de 360°. Si
-// el líder se movió de verdad, con un salto mayor a LEADER_SMOOTH_RESET, la
-// ventana se reinicia: así el suavizado no introduce retardo justo cuando hace
+// por referencia. La cámara tiene un ruido de σ≈10 mm y σ≈3,8° con el robot
+// quieto, que de otro modo se propagaría a la meta de cada seguidor. El ángulo
+// se promedia por seno y coseno para no romperse al envolver los 360°. Si el
+// líder se movió de verdad (un salto mayor que LEADER_SMOOTH_RESET), la ventana
+// se reinicia, para que el suavizado no introduzca retardo justo cuando hace
 // falta seguirlo.
 void SmoothLeaderPose(float xIn, float yIn, float angIn,
                       float *xOut, float *yOut, float *angOut) {
@@ -120,13 +118,12 @@ void SmoothLeaderPose(float xIn, float yIn, float angIn,
   *angOut = atan2(ss, sc) * RAD_TO_DEG;
 }
 
-// ¿Ya hay un REQUEST_POSITION esperando en la cola? El guard
-// congregation.waitingForResponse solo se levanta cuando la FSM EJECUTA la
-// instrucción, no cuando se encola, y entre ambos momentos puede haber cientos
-// de ms (el WAIT de arranque de CONGREGATION). Sin este chequeo se encolaban dos
-// pedidos, llegaban dos POSITION_RESPONSE, corrían dos ReactiveNavStep y la cola
-// quedaba con un ciclo duplicado: de ahí en más el robot ejecutaba giros
-// calculados para una pose vieja (medido el 2026-07-27, giros un ciclo atrasados).
+// ¿Ya hay un REQUEST_POSITION esperando en la cola? La guarda
+// congregation.waitingForResponse solo se levanta cuando la máquina de estados
+// ejecuta la instrucción, no cuando se encola, y entre ambos momentos pueden
+// pasar cientos de ms. Sin esta comprobación se encolarían dos pedidos, llegarían
+// dos POSITION_RESPONSE y la cola quedaría con un ciclo duplicado: el robot
+// ejecutaría giros calculados para una pose vieja.
 bool RequestPositionQueued() {
   for (const auto &ins : instructionList) {
     if ((int)ins[0] == REQUEST_POSITION) return true;
@@ -155,11 +152,11 @@ bool RequestPositionQueued() {
 //                SafeRingSlotAngle, con aproximación radial: el waypoint queda
 //                STAGING_MARGIN más lejos sobre el mismo rayo.
 //
-// El caso n==1 del círculo saca el slot del bearing líder→ROBOT, así que exige
-// una pose propia fresca. LEADER_POSITION suele llegar ANTES del primer
-// POSITION_RESPONSE; latchear ahí anclaba el slot a una lectura vieja y el robot
-// salía al lado contrario sin recalcular nunca (2026-07-27). Sin pose fresca se
-// pide una y se espera al próximo LEADER_POSITION, que llega a 4Hz.
+// El caso n == 1 del círculo saca la ranura del rumbo líder→robot, así que exige
+// una pose propia fresca. LEADER_POSITION suele llegar antes del primer
+// POSITION_RESPONSE, y fijar la ranura con una lectura vieja mandaría al robot al
+// lado contrario. Sin pose fresca se pide una y se espera al próximo
+// LEADER_POSITION, que llega a 4 Hz.
 void UpdateCongregationGoal(float leaderX, float leaderY, float leaderAngle) {
   const float STAGING_MARGIN = 150.0f;
   int    n     = max(1, congregation.totalFollowers);
@@ -175,12 +172,11 @@ void UpdateCongregationGoal(float leaderX, float leaderY, float leaderAngle) {
     int   k    = congregation.followerIndex / 2 + 1;
     int   side = (congregation.followerIndex % 2 == 0) ? 1 : -1;
 
-    // Dirección UNITARIA del brazo sobre el que se reparten los slots de ese
-    // lado. La cuña lo inclina 45° hacia atrás sumándole el opuesto del rumbo:
-    // como los dos sumandos son unitarios y perpendiculares, la suma mide √2 y
-    // hay que normalizarla. Sin ese 1/√2 el slot k quedaba a k·s·1.414 del
-    // líder, o sea 566mm cuando se pedían 400 (medido en lab el 2026-08-13:
-    // 550, 558 y 1151mm contra un espaciado pedido de 400).
+    // Dirección unitaria del brazo sobre el que se reparten las ranuras de ese
+        // lado. La cuña lo inclina 45° hacia atrás sumándole el opuesto del rumbo:
+        // como los dos sumandos son unitarios y perpendiculares, la suma mide √2 y
+        // hay que normalizarla; sin ese 1/√2, la ranura k quedaría a k·s·1,414 del
+        // líder.
     float ax = side * px, ay = side * py;
     if (shape == "cuna") {
       const float INV_SQRT2 = 0.70710678f;
@@ -354,7 +350,7 @@ void ReactiveNavStep() {
     fsmInstruction[1] = DegToArc(angleDiff);
     instructionList.push_back(fsmInstruction);
     fsmInstruction[0] = WAIT;
-    fsmInstruction[1] = navWaitAfterTurnMs;   // 17-oct: era 300 fijo
+    fsmInstruction[1] = navWaitAfterTurnMs;   // pausa tras el giro, ajustable con NAV_CONFIG|WAIT_TURN
     instructionList.push_back(fsmInstruction);
   }
 
@@ -363,7 +359,7 @@ void ReactiveNavStep() {
     fsmInstruction[1] = seg;
     instructionList.push_back(fsmInstruction);
     fsmInstruction[0] = WAIT;
-    fsmInstruction[1] = navWaitAfterMoveMs;   // 17-oct: era 300 fijo
+    fsmInstruction[1] = navWaitAfterMoveMs;   // pausa tras el avance, ajustable con NAV_CONFIG|WAIT_MOVE
     instructionList.push_back(fsmInstruction);
   }
 
@@ -373,17 +369,17 @@ void ReactiveNavStep() {
 }
 
 // ============================================================================
-// MEET — reparto de los slots del anillo por CERCANÍA, resuelto localmente.
+// MEET — reparto de las ranuras del anillo por cercanía, resuelto localmente.
 //
-// Es el mismo greedy que hacía la Base (par (distancia, robot, slot) más chico
-// primero, el que llega se queda), pero corrido por cada robot. Sin él el slot
-// saldría del orden de id y dos robots se cruzarían el camino para ocuparlo.
+// Es un reparto voraz (el par distancia–robot–ranura más pequeño primero: el
+// que llega se queda) que corre cada robot. Sin él, la ranura saldría del orden
+// de id y dos robots podrían cruzarse en el camino.
 //
-// Que dé lo mismo en todos NO es casualidad: las poses salen del ÚLTIMO
+// Da lo mismo en todos los robots porque las poses salen del último
 // NEIGHBOR_POSITIONS, un mensaje idéntico para todos, y el orden por id fija el
-// desempate. Mismo insumo + mismo criterio = misma repartición, sin negociar y
-// sin que la Base decida nada. Por eso la pose propia se toma de ese barrido y
-// no de robotPose, que cada robot refresca en un instante distinto.
+// desempate: mismos datos y mismo criterio dan el mismo reparto, sin negociar y
+// sin que la base decida. Por eso la pose propia se toma de ese mismo mensaje y
+// no de robotPose, que cada robot actualiza en un instante distinto.
 // ============================================================================
 int MeetSlotIndex(float tx, float ty, float ring, int n) {
   const int MAXN = DisperseState::MAX_NEIGHBORS + 1;
@@ -478,12 +474,12 @@ int MeetSlotIndex(float tx, float ty, float ring, int n) {
   return 0;
 }
 
-// Un paso de dispersión de enjambre, port 1:1 de maybe_disperse_hop() del
-// controller de sim validado en Webots. Se llama al recibir NEIGHBOR_POSITIONS,
-// a 1Hz. Solo actúa si la dispersión está activa, el robot está OCIOSO (sin
-// navegación ni instrucciones en cola) y conoce vecinos; un robot ocupado
-// espera al siguiente tick para reevaluar. Los saltos se acotan a DISP_ARENA
-// para que ninguno apunte a la pared.
+// Un paso de la dispersión del enjambre, equivalente a maybe_disperse_hop() del
+// simulador del laboratorio. Se llama al recibir NEIGHBOR_POSITIONS (1 Hz).
+// Solo actúa si la dispersión está activa, el robot está ocioso (sin navegación
+// ni instrucciones en cola) y conoce vecinos; un robot ocupado espera al
+// siguiente mensaje. Los saltos se acotan a DISP_ARENA para que ninguno apunte
+// a la pared.
 void MaybeDisperseHop() {
   if (!disperse.IsActive() || nav.isActive || nav.pendingInit ||
       !instructionList.empty() || disperse.nCount == 0) {
@@ -511,10 +507,10 @@ void MaybeDisperseHop() {
   }
   disperse.settled = false;
 
-  // Turno secuencial: solo salta el de MENOR id entre los que están demasiado
-  // cerca; el resto espera quieto (evita la tormenta de evasiones IR mutuas).
-  // Margen de 100mm: un vecino en la banda de jitter no bloquea. Si igual
-  // quedamos bloqueados ~10 rondas, saltar de todos modos (anti-deadlock).
+  // Turno secuencial: solo salta el de menor id entre los que están demasiado
+    // cerca; el resto espera quieto, lo que evita evasiones IR mutuas. Margen de
+    // 100 mm: un vecino en la banda de ruido no bloquea. Si el robot sigue
+    // bloqueado unas 10 rondas, salta de todos modos.
   int  myId = robotID.toInt();
   bool blockedByLower = false;
   for (int i = 0; i < disperse.nCount; i++) {
@@ -545,10 +541,10 @@ void MaybeDisperseHop() {
     vx = cos(ang); vy = sin(ang); norm = 1.0f;
   }
 
-  // Candidatos: repulsión directa y sus dos rotaciones ±90° (escape de esquina).
-  // Score = separación del vecino más cercano + bono de holgura a la pared: un
-  // objetivo en la esquina maximiza la separación pero deja al robot raspando
-  // dos muros (348 evasiones IR en sim → 2 con el bono).
+  // Candidatos: la repulsión directa y sus dos rotaciones de ±90° (escape de
+    // esquina). Puntaje = separación del vecino más cercano + un bono por holgura
+    // a la pared: un objetivo en la esquina maximiza la separación pero deja al
+    // robot rozando dos paredes.
   float cand[3][2] = { { vx, vy }, { -vy, vx }, { vy, -vx } };
   float bestX = 0, bestY = 0, bestScore = -1e12f;
   bool  haveBest = false;
@@ -584,12 +580,9 @@ void MaybeDisperseHop() {
                 robotID.c_str(), bestX, bestY, dmin);
 }
 
-// Decide si el obstaculo que ven los sensores es el companero que acaba de
-// reportar su pose. Compara distancia y angulo relativo, y para los sensores
-// laterales exige ademas que el otro robot este del lado que disparo.
-// Negociación de paso (05-nov-2026): qué le contesta este robot (`yo`) a otro
-// (`otro`) que lo tiene delante. Ver el bloque de pasoNegociado en AttaBot.ino.
-// 'Q' quieto, 'S' sigo (tengo el paso), 'C' cedo. Menor ID = tiene el paso.
+// Negociación de paso: qué le contesta este robot (`yo`) a otro (`otro`) que lo
+// tiene delante. 'Q' quieto, 'S' sigo (tiene el paso), 'C' cedo. El menor ID
+// tiene el paso. Ver pasoNegociado en AttaBot.ino.
 char DecidirPaso(int yo, int otro, bool meMuevo) {
   if (!meMuevo) return 'Q';
   return (yo < otro) ? 'S' : 'C';
@@ -599,6 +592,9 @@ const char *NombrePaso(char p) {
   return p == 'Q' ? "QUIETO" : p == 'S' ? "SIGO" : p == 'C' ? "CEDO" : "";
 }
 
+// Decide si el obstáculo que ven los sensores es el compañero que acaba de
+// reportar su pose. Compara distancia y ángulo relativo, y para los sensores
+// laterales exige además que el otro robot esté del lado que se disparó.
 bool IsRobotObstacle(float x2, float y2, float angle, int sensors, String id) {
   float deltaX = x2 - robotPose.x;
   float deltaY = y2 - robotPose.y;

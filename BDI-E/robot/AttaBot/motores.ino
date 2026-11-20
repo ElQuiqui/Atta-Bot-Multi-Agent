@@ -63,16 +63,14 @@ void EkfTick() {
 }
 
 // Clasifica una lectura RGBC del APDS9960 contra un color objetivo. Un canal
-// claro por debajo de 10 se descarta: está muy oscuro para que la proporción
-// entre canales signifique algo.
+// claro por debajo de 10 se descarta: está demasiado oscuro para que la
+// proporción entre canales signifique algo.
 //
-// Los canales van normalizados por el balance de blancos del propio robot
-// (COLOR_WB) antes de compararse. Sin eso el umbral tendría que absorber la
-// diferencia ENTRE SENSORES, y no puede: medido en lab, dos APDS9960 del mismo
-// modelo y distinto lote difieren 37% en la fracción de azul mirando el MISMO
-// objeto con la MISMA luz, y el más rojo de la flota clasificaba el obstáculo
-// beige como "rojo" de forma repetible. Sin calibrar se comparan los canales
-// crudos, que es el comportamiento de siempre.
+// Los canales se normalizan por el balance de blancos del propio robot
+// (COLOR_WB) antes de compararse. Sin eso, el umbral tendría que absorber la
+// diferencia entre sensores, que es demasiado grande: dos APDS9960 del mismo
+// modelo pueden diferir un 37 % en la fracción de azul mirando el mismo objeto
+// con la misma luz. Sin calibrar se comparan los canales crudos.
 bool MatchColor(const char *target, uint16_t r, uint16_t g, uint16_t b,
                 uint16_t c) {
   if (c < 10) return false;
@@ -92,7 +90,7 @@ bool MatchColor(const char *target, uint16_t r, uint16_t g, uint16_t b,
 // Candidato descartado (o inalcanzable): evadir con el patrón estándar de
 // retroceso y re-armar la patrulla RANDOM_WALK de la búsqueda.
 void SearchEvadeAndResume() {
-  // 17-oct: recordar dónde se descartó para no volver a revisarlo enseguida
+  // recordar dónde se descartó para no volver a revisarlo enseguida
   searchRejectX = robotPose.x; searchRejectY = robotPose.y; searchRejectMs = millis();
   instructionList.clear();
   fsmInstruction[0] = REVERSE;
@@ -115,8 +113,8 @@ void SearchEvadeAndResume() {
   }
   obstacles.Clear();
   obstacleDetected = false;
-  // 17-oct: true, como en la evasión normal: el giro y el avance de escape no se
-  // interrumpen por lo mismo que se está esquivando (StateMove lo baja al terminar).
+  // Como en la evasión normal: el giro y el avance de escape no se interrumpen
+    // por lo mismo que se está esquivando (StateMove lo baja al terminar).
   isEvading = true;
   state = READ_INSTRUCTION;
 }

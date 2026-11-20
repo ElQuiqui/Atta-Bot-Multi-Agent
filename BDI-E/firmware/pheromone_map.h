@@ -1,26 +1,24 @@
 /*****************************************************************************
- * pheromone_map.h — El ambiente estigmérgico (P2)
+ * pheromone_map.h — Mapa de feromona repelente de BDI-E
  *
- * Un campo escalar sobre la rejilla:
+ * Campo escalar sobre la cuadrícula: cada robot deposita feromona en la celda
+ * por la que pasa cualquier robot del enjambre, y la feromona se evapora con el
+ * tiempo. La deseabilidad de una celda es inversa a su concentración, lo que
+ * dispersa al enjambre durante la búsqueda (estigmergia: el rastro ajeno
+ * también guía al robot).
  *
- *   repel[]    se deposita donde pasa CUALQUIER robot y se evapora.
- *              Es lo que DISPERSA al enjambre durante la búsqueda.
+ * Cada robot mantiene su propia copia; no hay copia maestra. Las réplicas
+ * tienden a coincidir porque todas reciben la misma difusión de posiciones,
+ * pero solo de forma eventual.
  *
- * El reclutamiento al hallazgo NO usa feromona: lo hace el MEET del
- * laboratorio (ver bdi.h, P_MEET_LAB). El campo atractivo que había acá se
- * retiró el 28-sep-2026 para no duplicar lo que el laboratorio ya tiene.
+ * El reclutamiento al hallazgo no usa feromona: lo hace la congregación
+ * MEET del firmware del laboratorio (ver P_MEET_LAB en bdi.h).
  *
- * La estigmergia está en que el depósito se hace por todos los robots, no solo
- * por el propio: el rastro ajeno también me guía. Cada robot mantiene su propia
- * copia; no hay copia maestra. Las réplicas convergen porque todos reciben el
- * mismo broadcast de poses.
+ * Fundamento: la feromona repelente con evaporación tiene resultados formales
+ * de cobertura (Wagner, Lindenbaum y Bruckstein, «Distributed Covering by
+ * Ant-Robots Using Evaporating Traces», IEEE T-RA, 1999).
  *
- * LINAJE TEÓRICO — para el Capítulo 2, y no es una cita genérica de ACO:
- * la feromona repelente con evaporación tiene resultados formales de cobertura
- * en Wagner, Lindenbaum y Bruckstein, «Distributed Covering by Ant-Robots Using
- * Evaporating Traces», IEEE T-RA, 1999, y en la familia node counting / LRTA*.
- *
- * SIN DEPENDENCIAS DE ARDUINO.
+ * Sin dependencias de Arduino.
  *****************************************************************************/
 #ifndef BDIE_PHEROMONE_MAP_H
 #define BDIE_PHEROMONE_MAP_H
@@ -34,52 +32,35 @@ namespace bdie {
 static const int VISITED_WORDS = (MAX_CELLS + 31) / 32;
 
 /*===========================================================================*
- *  PRESUPUESTO DE MEMORIA — el número que cierra R9 para esta pieza
- *
- *  Punto de operación, 154 celdas de 190 mm — datos vivos:
- *      repel 154 B + visited 20 B + blocked 20 B = 194 B
- *
- *  Reserva estática real (arreglos al tope de MAX_CELLS = 320):
- *      320 + 40 + 40 = 400 B
- *
- *  Los dos números van al informe, no uno solo. La reserva es 2× el dato vivo
- *  A PROPÓSITO: es el margen de diseño para que el mapa pueda duplicar su
- *  resolución sin tocar la estructura, y el tope se movió junto con el punto de
- *  operación precisamente para que ese «2×» siga siendo cierto (ver la nota del
- *  tope en grid.h). Frente a los ~150–250 kB de heap libre estimado, 400 B sigue
- *  siendo ruido; la advertencia de R9 apunta al firmware existente, no a P2, y
- *  hay que poder decirlo con el getFreeHeap() medido en la mano (visita S5).
+ *  Memoria. Los arreglos se dimensionan a MAX_CELLS = 320:
+ *      repel 320 B + visited 40 B + blocked 40 B = 400 B de reserva estática.
+ *  Con la cuadrícula de operación (266 celdas) los datos vivos son unos
+ *  340 B. La reserva deja margen para duplicar la resolución sin cambiar la
+ *  estructura (ver MAX_CELLS en grid.h).
  *===========================================================================*/
 
 struct PheromoneMap {
     uint8_t  repel  [MAX_CELLS];
-    uint32_t visited[VISITED_WORDS];   // MÉTRICA acumulada — NO se evapora
-    uint32_t blocked[VISITED_WORDS];   // celdas inhabilitadas (campaña con obstáculos)
+    uint32_t visited[VISITED_WORDS];   // cobertura acumulada: no se evapora
+    uint32_t blocked[VISITED_WORDS];   // celdas inhabilitadas (obstáculos conocidos)
     int      n = 0;
 
-    /* Parámetros. Se barren en el banco de pruebas, no en el
-     * laboratorio, y el barrido se reporta como figura del Cap. 5 en vez de
-     * esconderse. Los valores de abajo son el PUNTO DE PARTIDA. */
-    /* ⚠️ LEER LA NOTA DE CUANTIZACIÓN debajo de Evaporate() antes de barrer esto:
-     * en el rango de valores en que opera el mapa, rho NO se comporta como la
-     * ley geométrica que sugiere. El ritmo real lo fija el PERÍODO. */
+    /* Parámetros del mapa. Se ajustan en el banco de simulación. Antes de cambiar
+     * rho conviene leer la nota de cuantización de Evaporate(): en el rango en que
+     * opera el mapa, el ritmo real de evaporación lo fija el período de
+     * aplicación (evaporatePeriodMs en bdi.h) más que rho. */
     uint8_t  rho     = 8;      // evaporación, en 1/256 por aplicación
-    /* 12-oct-2026: deposit 40 → 120 y beta 1,0 → 0,5, más el bono de novedad.
-     * Medido en la corrida de laboratorio de las 16:01: en 24 de 39 decisiones
-     * con una vecina NUNCA visitada disponible, el robot eligió una ya pisada.
-     * Con deposit = 40 una celda pisada pesaba 0,80 contra 1,0, y el costo de
-     * giro (0,10–1,0 con beta = 1) dominaba: seguir derecho sobre lo barrido le
-     * ganaba a girar 90° hacia lo nuevo. Además la huella de 40 duraba ~136 s,
-     * menos que una pasada por la franja. Con 120 dura ~5 min. */
+    /* Con 120 por visita, una celda pisada pesa bastante menos que una nueva y
+     * la huella dura unos 5 min, más que una pasada del robot por su zona. Con un
+     * depósito menor el costo de giro dominaba la ruleta y el robot seguía derecho
+     * sobre lo ya barrido. */
     uint8_t  deposit = 120;    // incremento por visita
     float    alpha   = 1.5f;   // peso de la feromona en la ruleta
     float    beta    = 0.5f;   // peso del costo de giro en la ruleta
-    /* Bono de novedad: multiplica la deseabilidad de una celda que YA FUE
-     * VISITADA alguna vez (visited[], que no se evapora). La feromona dice
-     * «hace poco pasó alguien»; visited[] dice «esto ya se miró». Para buscar un
-     * objetivo estático lo segundo es lo que importa, y sin este término el
-     * robot olvidaba lo barrido en cuanto se evaporaba la huella.
-     * 1,0 = desactivado (comportamiento anterior). */
+    /* Bono de novedad: multiplica la deseabilidad de una celda que ya fue
+     * visitada alguna vez (visited[], que no se evapora). La feromona dice «hace
+     * poco pasó alguien»; visited[] dice «esto ya se miró», que es lo que importa
+     * para buscar un objetivo estático. 1,0 lo desactiva. */
     float    novelty = 0.3f;
 
     // ── Ciclo de vida ─────────────────────────────────────────────────────
@@ -97,9 +78,9 @@ struct PheromoneMap {
 
     // ── Campo repelente ───────────────────────────────────────────────────
 
-    /* Depósito. Se llama por CADA robot visto en el broadcast, no solo por el
-     * propio: ahí está la estigmergia y ahí está la razón por la que las
-     * réplicas convergen sin hablarse. */
+    /* Depósito. Se llama por cada robot visto en la difusión de posiciones, no
+     * solo por el propio: ahí está la estigmergia, y por eso las réplicas
+     * convergen sin intercambiar el mapa. */
     void Deposit(int k) {
         if (k < 0 || k >= n) return;
         repel[k] = (repel[k] > (uint8_t)(255 - deposit)) ? 255
@@ -107,51 +88,24 @@ struct PheromoneMap {
         MarkVisited(k);
     }
 
-    /* Evaporación. Sin ella el mapa se satura y el enjambre se paraliza: con
-     * todas las celdas en 255 la ruleta se vuelve uniforme y el robot deja de
-     * tener criterio para elegir.
+    /* Evaporación. Sin ella el mapa se satura, la ruleta se vuelve uniforme y el
+     * robot pierde criterio para elegir.
      *
-     * ─── NOTA DE CUANTIZACIÓN, y no es un detalle ────────────────────────────
-     *
-     * Esta cuenta es entera, y eso hace que la ley geométrica valga solo para
-     * concentraciones altas. Para una celda en v, la evaporación deja
+     * Nota de cuantización. La cuenta es entera, así que la ley geométrica solo
+     * vale para concentraciones altas. Para una celda en v,
      *
      *     v' = ⌊v·(256−rho)/256⌋ = v − ⌈v·rho/256⌉
      *
-     * y mientras v < 256/rho el término de arriba vale 1: **la celda baja de a
-     * uno por aplicación, sea cual sea rho**. Con rho = 8 eso ocurre por debajo
-     * de 32, y `deposit` valía 40: o sea que estábamos casi siempre en la zona
-     * lineal, no en la geométrica.
+     * y mientras v < 256/rho la celda baja de a uno por aplicación, sea cual sea
+     * rho. Con deposit = 120 y rho = 8, un depósito fresco pasa sus primeras
+     * aplicaciones en la zona geométrica y llega a cero en 59 aplicaciones (82 con
+     * rho = 4, 102 con 2, 120 con 1). Para depósitos pequeños rho casi no influye:
+     * partiendo de v = 40, la huella dura 34 aplicaciones con rho = 8 y 40 con
+     * rho = 1.
      *
-     * 14-oct-2026: desde el 12-oct `deposit` vale 120, por encima de 256/rho.
-     * Un depósito fresco pasa ahora sus primeras aplicaciones en la zona
-     * geométrica y llega a cero en 59 aplicaciones con rho = 8 (82 con 4, 102
-     * con 2, 120 con 1): rho vuelve a mover algo. La tabla de abajo es la del
-     * depósito viejo y se deja porque es la que justificó el período de 4 s.
-     *
-     * Medido sobre este mismo código, partiendo de un depósito (v = 40):
-     *
-     *     rho    vida media que dice la ley     vida media real     a cero
-     *      8              21,8 aplic.               14 aplic.      34 aplic.
-     *      4              44,0 aplic.               20 aplic.      40 aplic.
-     *      2              88,4 aplic.               20 aplic.      40 aplic.
-     *      1             177,1 aplic.               20 aplic.      40 aplic.
-     *
-     * De rho = 8 a rho = 1 —ocho veces más lento en la ley— la huella pasa de
-     * durar 34 aplicaciones a durar 40. **rho no es la palanca que parece.**
-     *
-     * Dos consecuencias, las dos importan:
-     *   1. Para cambiar el ritmo de evaporación se mueve `evaporatePeriodMs`
-     *      (bdi.h), que sí lo divide exacto. Hoy está en 4 s.
-     *   2. El barrido de parámetros del Cap. 5 no debe presentar rho como una
-     *      palanca de la persistencia sin esta salvedad. Sí lo es si algún día
-     *      se sube `deposit` por encima de 256/rho, o si la feromona pasa a
-     *      punto fijo de 16 bits — que es la corrección de fondo, cuesta +320 B
-     *      y está deliberadamente NO hecha: se decidió mover el período, que es
-     *      una línea y riesgo cero. Queda anotado para cuando haga falta.
-     *
-     * Cubierto por T02 (propiedades 8 a 11), que fija este comportamiento por
-     * escrito para que nadie lo «mejore» sin enterarse. */
+     * Por eso, para cambiar el ritmo de evaporación se mueve evaporatePeriodMs
+     * (bdi.h), que lo divide exacto. La corrección de fondo sería una feromona en
+     * punto fijo de 16 bits (+320 B). La prueba T02 fija este comportamiento. */
     void Evaporate() {
         const uint16_t keep = (uint16_t)(255 - rho);
         for (int i = 0; i < n; ++i)
@@ -159,14 +113,9 @@ struct PheromoneMap {
     }
 
     // ── Cobertura acumulada: LA MÉTRICA, y vive aparte a propósito ─────────
-    /*
-     * Las dos métricas de cobertura son distintas y confundirlas cuesta una
-     * vuelta entera. La feromona SE EVAPORA porque eso es lo que la hace útil
-     * para decidir; medir la cobertura sobre ella da una curva que BAJA con el
-     * tiempo, que es absurdo como métrica de exploración. La cobertura del
-     * Capítulo 5 se lleva en visited[], que nunca se evapora.
-     * Son dos estructuras con dos propósitos, separadas POR DISEÑO.
-     */
+    /* La cobertura se lleva aparte, en visited[], que nunca se evapora. Medirla
+     * sobre la feromona daría una curva que baja con el tiempo. Son dos
+     * estructuras con dos propósitos distintos. */
     void MarkVisited(int k) { if (k >= 0 && k < n) visited[k >> 5] |= (1u << (k & 31)); }
     bool Visited(int k) const {
         return (k >= 0 && k < n) && (visited[k >> 5] >> (k & 31)) & 1u;
@@ -181,22 +130,20 @@ struct PheromoneMap {
     }
 
     // ── Exploración: ruleta ACO sobre las ocho vecinas ────────────────────
-    /*
-     *   deseabilidad_k ∝ (1 / (1 + tau_k))^alpha  ·  eta_k^beta
+    /* Elige la siguiente celda con una ruleta sobre las ocho vecinas:
      *
-     *   tau_k = repel[k]/255   feromona normalizada  → huir de lo ya pisado
-     *   eta_k = 1 - |Δrumbo|/180 · 0.9              → girar cuesta tiempo y batería
+     *   deseabilidad_k ∝ (1 / (1 + tau_k))^alpha · eta_k^beta · novedad_k
      *
-     * Nótese el signo: es feromona REPELENTE, así que la deseabilidad es
-     * INVERSA a la concentración. En un ACO clásico de rutas es al revés, y
-     * copiar la fórmula sin invertirla produce un enjambre que se amontona en
-     * la celda que más ha pisado. Es el error de una línea más caro de esta
-     * pieza.
+     *   tau_k = repel[k]/255          feromona normalizada: huir de lo pisado
+     *   eta_k = 1 − 0,9·|Δrumbo|/180   girar cuesta tiempo y batería
      *
-     * mask: si no es nulo, solo se consideran celdas con mask[k] != 0 (mi zona).
-     * Devuelve -1 si ninguna vecina es elegible; el llamador decide qué hacer
-     * (en la práctica, ampliar a toda la arena: la zona se agotó).
-     */
+     * La deseabilidad es inversa a la concentración porque la feromona es
+     * repelente; en un ACO de rutas es al revés, y sin invertirla el enjambre se
+     * amontona en las celdas más pisadas.
+     *
+     * mask: si no es nulo, solo se consideran celdas con mask[k] != 0 (la zona del
+     * robot). Devuelve -1 si ninguna vecina es elegible; el llamador decide qué
+     * hacer. */
     int NextCell(const GridConfig& g, int from, float headingDeg,
                  const uint8_t* mask, uint32_t& rng) const {
         if (from < 0 || from >= n) return -1;
@@ -223,9 +170,8 @@ struct PheromoneMap {
         }
         if (cand == 0 || sum <= 0.0f) return -1;
 
-        /* Ruleta. El sorteo es lo que dispersa al enjambre: con selección
-         * greedy dos robots en celdas vecinas con mapas casi iguales toman
-         * siempre la misma decisión y se pegan. */
+        /* Ruleta: el sorteo dispersa al enjambre. Con selección determinista, dos
+         * robots vecinos con mapas casi iguales toman la misma decisión y se pegan. */
         float r = RandUnit(rng) * sum;
         for (int i = 0; i < cand; ++i) {
             r -= w[i];
@@ -233,11 +179,10 @@ struct PheromoneMap {
         }
         return idx[cand - 1];
     }
-    /* Frontera: la celda NUNCA visitada más cercana a `from` (distancia
-     * euclídea en celdas, que prefiere avanzar recto). Respeta mask y las
-     * bloqueadas. Empates por sorteo, para que dos robots no elijan la misma.
-     * Devuelve -1 si no queda ninguna. Barre las n celdas: 160 comparaciones
-     * enteras, nada frente al período de 100 ms del ciclo. */
+    /* Frontera: la celda nunca visitada más cercana a `from`, por distancia
+     * euclídea en celdas (prefiere avanzar recto). Respeta mask y las celdas
+     * bloqueadas, y desempata por sorteo para que dos robots no elijan la misma.
+     * Devuelve -1 si no queda ninguna. */
     int NearestUnvisited(const GridConfig& g, int from, const uint8_t* mask,
                          uint32_t& rng) const {
         if (from < 0 || from >= n) return -1;

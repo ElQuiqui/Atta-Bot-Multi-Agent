@@ -1,12 +1,12 @@
 """
-render_gui.py — la GUI con los paneles BDI-E, alimentada por el BANCO, sin robots
+render_gui.py — la GUI con los paneles BDI-E, alimentada por el banco, sin robots
 
-Corre una misión en el banco (el mismo C++ del robot, y el mismo codificador de
-telemetría), le pasa los THINK/BMAP/POSES al BdieMonitor de la base real y
+Corre una misión en el banco (el mismo C++ del robot y el mismo codificador de
+telemetría), le pasa los THINK, BMAP y POSES al BdieMonitor de la base real y
 dibuja la ventana de la GUI fuera de pantalla. Guarda capturas PNG.
 
-Sirve para dos cosas: probar los paneles sin laboratorio, y ver cómo se tiene
-que ver una misión sana antes de ir a mirarla en vivo.
+Sirve para probar los paneles sin laboratorio y para ver cómo se ve una misión
+sana antes de observarla en vivo.
 
     python3 pruebas_host/render_gui.py [semilla] [segundos] [--caida R@s]
 """

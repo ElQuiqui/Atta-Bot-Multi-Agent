@@ -1,20 +1,13 @@
 # ============================================================================
-#  COPIA VERBATIM — no editar aquí
+#  Copia sin cambios de sim/attabot_sim.py del repositorio jcbrenes/Atta-Bot
+#  (commit 36bb876). No editar aquí; si el original cambia, volver a copiarlo.
 #
-#  Origen : repositorio Atta-Bot, sim/attabot_sim.py
-#  Base   : commit 36bb876 (el mismo que documenta ADAPTACION_Solucion_AttaBot.md)
-#  Fecha  : 2026-09-07
-#  Cambios: ninguno
+#  Se copia en vez de referenciarse para que esta carpeta sea autocontenida.
 #
-#  Se copia en vez de referenciarse para que Codigo/ sea autocontenido: un
-#  entregable de tesis tiene que poder reproducirse dentro de años sin depender
-#  de dónde estaba el repositorio en la máquina del autor.
-#
-#  Lo que aporta este archivo es la FÍSICA, no la lógica de decisión: el modelo
-#  de ruido calibrado en laboratorio (sigma ArUco 30 mm, sigma de ángulo 2 grados,
-#  deriva de motor 2 %, factor de subgiro 0.77 para el robot sin IMU) y el port
-#  de ReactiveNavStep(). Si el repo lo actualiza, hay que volver a copiarlo y
-#  decirlo en la bitácora.
+#  Aporta la física, no la lógica de decisión: el modelo de ruido calibrado en
+#  el laboratorio (sigma ArUco 30 mm, sigma de ángulo 2°, deriva de motor 2 %,
+#  factor de subgiro 0,77 para el robot sin IMU) y el equivalente en Python de
+#  ReactiveNavStep().
 # ============================================================================
 
 """

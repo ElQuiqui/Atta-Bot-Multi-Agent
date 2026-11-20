@@ -1,25 +1,26 @@
-// La maquina de estados: loop() y los estados que despacha.
+// ============================================================================
+// estados.ino — La máquina de estados: loop() y los estados que despacha.
 //
 // Cada ciclo lee sensores, atiende la radio y avanza el estado en curso. Los
 // estados se encolan en instructionList y READ_INSTRUCTION los va sacando.
 //
 // Arduino concatena todos los .ino de la carpeta en una sola unidad de
-// traduccion — primero AttaBot.ino, despues el resto en orden alfabetico — asi
-// que las constantes, las variables globales y las declaraciones forward viven
-// en AttaBot.ino y desde aca se ven directo, sin extern ni cabeceras.
+// traducción (primero AttaBot.ino y después el resto en orden alfabético), así
+// que las constantes, las variables globales y las declaraciones adelantadas
+// están en AttaBot.ino y desde aquí se ven directamente.
 
 // ============================================================================
-// ESTADOS DE LA FSM
+// ESTADOS DE LA MÁQUINA
 // ============================================================================
 
-// Espera pasiva de instructionValue ms. Es el unico estado donde se atiende el
-// OTA, asi que el robot solo acepta una actualizacion cuando esta quieto. Al
-// vencer el plazo pasa a leer la proxima instruccion, salvo que el movimiento
-// anterior no haya terminado: ahi retrocede primero.
+// Espera pasiva de instructionValue ms. Es el único estado donde se atiende
+// OTA, así que el robot solo acepta una actualización cuando está quieto. Al
+// vencer el plazo pasa a leer la próxima instrucción, salvo que el movimiento
+// anterior no haya terminado: en ese caso retrocede primero.
 void StateWait() {
   ArduinoOTA.handle();
 
-  // BDI-E (punto 3): cuerpo libre y misión activa → deliberar
+  // BDI-E: cuerpo libre y misión activa → deliberar
   if (missionActive && instructionList.empty() && !nav.isActive &&
       !nav.pendingInit) {
     agent.OnArrived();                       // EV_ARRIVED
@@ -39,8 +40,8 @@ void StateWait() {
   }
 }
 
-// Avanza instructionValue mm. Si un sensor ve un obstaculo a mitad de camino,
-// guarda en intContext cuanto faltaba y corta: RESUME_AFTER_EVASION retoma
+// Avanza instructionValue mm. Si un sensor ve un obstáculo a mitad de camino,
+// guarda en intContext cuánto faltaba y corta: RESUME_AFTER_EVASION retoma
 // justo ese resto en vez de repetir el tramo entero.
 void StateMove() {
   if (MotionTimedOut()) { AbortMotion("MOVE"); return; }
@@ -76,15 +77,15 @@ void StateMove() {
   }
 }
 
-// Giro en el lugar. Con IMU disponible es lazo cerrado en yaw: acumula el giro
-// real con unwrap incremental, re-apunta el arco restante en cada ciclo y al
-// terminar mide el residuo y encola correcciones hasta entrar en tolerancia o
-// agotar imuTurnMaxCorrections. El objetivo lo define el IMU y no la geometria
-// supuesta, asi que la rueda loca, el stiction y un centerToWheelDistance mal
-// calibrado dejan de producir deficit.
+// Giro en el lugar. Con IMU disponible es de lazo cerrado en guiñada: acumula
+// el giro real desenvolviendo el ángulo, reorienta el arco restante en cada
+// ciclo y al terminar mide el residuo y encola correcciones hasta entrar en
+// tolerancia o agotar imuTurnMaxCorrections. El objetivo lo define la IMU y no
+// la geometría supuesta, así que la rueda loca, la fricción estática y un
+// centerToWheelDistance mal calibrado no producen déficit de giro.
 //
-// Si el yaw deja de avanzar (IMU muda o congelada) cierra por encoders para no
-// girar infinito. Sin IMU cae al giro a ciegas por distancia de rueda.
+// Si la guiñada deja de avanzar (IMU muda o congelada), cierra por encoders
+// para no girar sin fin. Sin IMU, gira a ciegas por distancia de rueda.
 void StateTurn() {
   if (MotionTimedOut()) { AbortMotion("TURN"); return; }
   if (imuAvailable && !imuTurnActive) {
@@ -97,10 +98,8 @@ void StateTurn() {
   }
 
   if (imuAvailable && imuTurnActive) {
-    // Giro cerrado en yaw: acumular el giro real con unwrap incremental y
-    // re-apuntar el arco restante en cada ciclo. El objetivo lo define el
-    // IMU, no la geometría supuesta — rueda loca, stiction y wheel_dist
-    // dejan de producir déficit.
+    // Lazo cerrado en guiñada: acumular el giro real y reorientar el arco
+        // restante en cada ciclo.
     float dYaw = yaw - imuTurnPrevYaw;
     if (dYaw >  180.0f) dYaw -= 360.0f;
     if (dYaw < -180.0f) dYaw += 360.0f;
@@ -108,16 +107,16 @@ void StateTurn() {
     imuTurnPrevYaw   = yaw;
 
     if (imuTurnSettleUntil != 0) {
-      // Motores ya cortados: seguir midiendo hasta que el coast termine,
-      // así la verificación final incluye la inercia (la cámara mostraba
-      // 2-12° de giro extra después del corte que el IMU no contaba)
+      // Motores ya cortados: seguir midiendo hasta que termine la inercia, para
+            // que la verificación final incluya los 2–12° de giro extra después del
+            // corte.
       if (millis() < imuTurnSettleUntil) {
         return;
       }
       imuTurnSettleUntil = 0;
 
-      // delta viene sin wrap, asi que sirve para arcos de mas de 180°; un error
-      // positivo significa que el robot giro de menos.
+      // delta no está envuelto, así que sirve para arcos de más de 180°; un error
+            // positivo significa que el robot giró de menos.
       float delta = imuTurnAccumDeg;
       float error = imuTurnTargetDeg - delta;
       MessageDebugf("DEBUG: -1, ID: %s, TURN IMU: objetivo=%.1f° real=%.1f° error=%.1f° corr#%d (yaw %.1f→%.1f)",
@@ -126,10 +125,10 @@ void StateTurn() {
 
       if (abs(error) > imuTurnTolerance &&
           imuTurnCorrCount < imuTurnMaxCorrections) {
-        // Closed-loop iterativo: encolar otra corrección y volver a medir
-        // tras su settle. Ya no es de un solo tiro — itera hasta |error|<tol
-        // o agotar imuTurnMaxCorrections. La corrección corre SIN brake-lead
-        // (ver rama de manejo) para que el arco chico no se cancele solo.
+        // Lazo cerrado iterativo: encolar otra corrección y volver a medir tras su
+                // espera, hasta |error| < tolerancia o agotar imuTurnMaxCorrections. La
+                // corrección corre sin anticipo de frenado (ver la rama de manejo) para
+                // que un arco pequeño no se anule solo.
         float corrArc = DegToArc(error);
         fsmInstruction[0] = TURN;
         fsmInstruction[1] = corrArc;
@@ -148,8 +147,8 @@ void StateTurn() {
       float leftTraveled  = movement.leftPulseCount * millimetersPerPulse;
       float rightTraveled = movement.rightPulseCount * millimetersPerPulse;
 
-      // Failsafe: si el yaw no avanza (IMU muda/congelada), cerrar por
-      // encoders para no girar infinito
+      // Respaldo: si la guiñada no avanza (IMU muda o congelada), cerrar por
+            // encoders para no girar sin fin.
       if (fabs(leftTraveled) > fabs(instructionValue) * 1.5f + 20.0f) {
         MessageDebugf("DEBUG: -1, ID: %s, TURN failsafe: yaw estancado "
                       "(%.1f° de %.1f°), cierro por encoders",
@@ -159,9 +158,9 @@ void StateTurn() {
         imuTurnCorrCount    = 0;
         movementReady       = true;
       } else {
-        // Frenar imuTurnBrakeLead antes del objetivo: la inercia completa el
-        // giro. PERO en una corrección el arco es chico y no hay momento que
-        // costear → lead=0; con lead la corrección se cancelaría a sí misma.
+        // Frenar imuTurnBrakeLead antes del objetivo: la inercia completa el giro.
+                // En una corrección el arco es pequeño y no hay inercia que compensar,
+                // así que el anticipo es 0; con anticipo, la corrección se anularía.
         float lead = imuTurnIsCorrection
                          ? 0.0f
                          : ((imuTurnTargetDeg >= 0) ? imuTurnBrakeLead
@@ -240,19 +239,16 @@ void StateRandomWalk() {
   state = READ_INSTRUCTION;
 }
 
-// Retrocede una distancia fija para despegarse de lo que sea que bloquee, antes
-// de reintentar.
+// Retrocede una distancia fija para despegarse de lo que lo bloquea, antes de
+// reintentar.
 void StateReverse() {
   if (MotionTimedOut()) { AbortMotion("REVERSE"); return; }
   movementReady = MoveDistanceByWheel(reverseDistance, reverseDistance);
 
-  // 17-oct-2026: el retroceso YA NO se corta por obstáculos. Los sensores (IR
-  // laterales y APDS frontal) miran hacia adelante y a los costados: lo que ven
-  // es justo aquello de lo que el robot se está alejando. Antes, si el
-  // retroceso arrancaba con isEvading = false (descartar un candidato de la
-  // búsqueda), el obstáculo de enfrente lo frenaba en el primer ciclo y el robot
-  // no podía despegarse nunca: Atta_3 quedó >2 min contra la fila de robots
-  // estacionados y Atta_1 pegado al cubo después de encontrarlo.
+  // El retroceso no se corta por obstáculos: los sensores (IR laterales y APDS
+    // frontal) miran hacia adelante y a los costados, así que lo que ven es
+    // justo aquello de lo que el robot se está alejando. Si se cortara, el robot
+    // no podría despegarse de un obstáculo de frente.
   if (movementReady) {
     obstacleDetected = true;
     MessageDebugf("DEBUG: -1, ID: %s, Retroceso completado", robotID.c_str());
@@ -260,9 +256,9 @@ void StateReverse() {
   }
 }
 
-// Corta los motores y decide que sigue. Si el movimiento habia terminado bien,
-// vuelve a WAIT; si se corto por un obstaculo, va a identificarlo y de paso le
-// manda la pose a la Base.
+// Corta los motores y decide qué sigue. Si el movimiento había terminado bien,
+// vuelve a WAIT; si se cortó por un obstáculo, va a identificarlo y de paso le
+// manda la pose a la base.
 void StateStop() {
   ConfigureHBridge(0, 0);
 
@@ -277,21 +273,21 @@ void StateStop() {
 
   } else {
     SendPose();
-    /* 07-nov-2026: re-escanear cuenta como detección NUEVA. Sin esto, si se llega
-     * acá desde ACTIVE_EVASION por «datos obsoletos», IDENTIFY_OBSTACLE espera
-     * otros 600 ms, ACTIVE_EVASION vuelve a ver el mismo evasionStartTime viejo y
-     * manda a STOP otra vez: bucle sin evadir nunca (ver el hallazgo en
-     * StateSearchApproach). Los sensores se leen en cada loop(), así que el
-     * bitmap de obstáculos ya es actual. */
+    /* Volver a explorar cuenta como una detección nueva. Si se llega aquí desde
+     * ACTIVE_EVASION por datos obsoletos y no se renueva evasionStartTime,
+     * IDENTIFY_OBSTACLE espera otros 600 ms, ACTIVE_EVASION vuelve a ver el
+     * instante viejo y manda otra vez a STOP, en un bucle sin evadir nunca. Los
+     * sensores se leen en cada loop(), así que el mapa de bits de obstáculos ya
+     * está al día. */
     evasionStartTime = millis();
     state = IDENTIFY_OBSTACLE;
   }
 }
 
-// Saca la proxima instruccion de la cola y salta a su estado. Con la cola vacia
-// vuelve a WAIT. El bitmap de obstaculos se limpia solo si no venimos de una
-// evasion ni de una instruccion interrumpida, porque en esos casos todavia hace
-// falta saber que sensor disparo.
+// Saca la próxima instrucción de la cola y salta a su estado. Con la cola
+// vacía vuelve a WAIT. El mapa de bits de obstáculos se limpia solo si no se
+// viene de una evasión ni de una instrucción interrumpida, porque en esos
+// casos todavía hace falta saber qué sensor se disparó.
 void StateReadInstruction() {
   if (!isEvading && !intContext.wasInterrupted) {
 
@@ -303,7 +299,7 @@ void StateReadInstruction() {
     instructionList.pop_front();
     instructionValue = fsmInstruction[1];
     state = static_cast<RobotState>(fsmInstruction[0]);
-    // Vigilante de movimiento (17-oct-2026): presupuesto de tiempo por instrucción.
+    // Vigilante de movimiento: presupuesto de tiempo por instrucción.
     if (state == MOVE || state == REVERSE || state == TURN) {
       motionStartMs  = millis();
       motionBudgetMs = (state == TURN)
@@ -313,8 +309,8 @@ void StateReadInstruction() {
       motionBudgetMs = 0;
     }
     direction = instructionValue > 0 ? '+' : '-';
-    // Sonda: qué valor sale realmente de la cola (2026-07-29, TURN con
-    // objetivo=0°). Solo con debug activo; MOVE=1 TURN=2 WAIT=3.
+    // Sonda de depuración: qué valor sale realmente de la cola. Solo con depuración
+        // activa; MOVE=1 TURN=2 WAIT=3.
     if (state == TURN || state == MOVE) {
       MessageDebugf("DEBUG: -1, ID: %s, READ: estado=%d valor=%.2f (quedan %d)",
                     robotID.c_str(), (int)state, instructionValue,
@@ -327,7 +323,7 @@ void StateReadInstruction() {
   }
 }
 
-// Le avisa a la Base que termino la secuencia de instrucciones.
+// Le avisa a la base que terminó la secuencia de instrucciones.
 void StateMessageBase() {
   const char *message = "";
   if (instructionValue == 1) {
@@ -339,17 +335,17 @@ void StateMessageBase() {
   instructionValue = instructionCompletedDelay;
 }
 
-// Decide si lo que bloquea es otro robot o un obstaculo del escenario. Espera
-// obstacleWaitTime a que llegue un OBSTACLE_DETECTED de algun companero: si
-// llega, alcanza con esperar a que se aparte; si no, es fijo y hay que evadir.
+// Decide si lo que bloquea es otro robot o un obstáculo del escenario. Espera
+// obstacleWaitTime a que llegue un OBSTACLE_DETECTED de algún compañero: si
+// llega, basta con esperar a que se aparte; si no, es fijo y hay que evadir.
 void SearchTrace(const char *fmt, ...);
 void StateIdentifyObstacle() {
   currentMillis = millis();
-  // 17-oct-2026: tres robots alrededor del cubo se identificaban MUTUAMENTE como
-  // «el obstáculo es un robot» (cada uno ve a otro del otro lado) y esperaban
-  // para siempre a que el otro se moviera, con CHECK_OBSTACLE a 10 Hz. Si la
-  // respuesta «es un robot» se repite IDENT_ROBOT_MAX veces sin pausa, se trata
-  // como obstáculo fijo: evasión normal, y en búsqueda, candidato.
+  // Varios robots alrededor del objetivo pueden identificarse mutuamente como
+    // «el obstáculo es un robot» (cada uno ve a otro enfrente) y esperar sin fin a
+    // que el otro se mueva. Si la respuesta «es un robot» se repite
+    // IDENT_ROBOT_MAX veces seguidas, se trata como obstáculo fijo: evasión
+    // normal y, en búsqueda, candidato.
   static int identRobotSeguidas = 0;
   static unsigned long identRobotUltima = 0;
   if (obstacles.robotDetected && search.active && searchCandAunqueRobot &&
@@ -361,8 +357,8 @@ void StateIdentifyObstacle() {
     instructionValue = 0;
     return;
   }
-  // 05-nov-2026: negociación de paso. El otro dijo que no se va a mover (QUIETO)
-  // o que tiene el paso (SIGO): esperarlo es perder el tiempo, se evade ya.
+  // Negociación de paso: el otro dijo que no se va a mover (QUIETO) o que tiene
+    // el paso (SIGO); esperarlo no sirve, se evade de inmediato.
   if (obstacles.robotDetected && pasoNegociado &&
       (obstacles.robotPaso == 'Q' || obstacles.robotPaso == 'S')) {
     if (search.active) SearchTrace("robot %s %s: evado sin esperar", obstacles.fromRobotID.c_str(),
@@ -404,10 +400,10 @@ void StateIdentifyObstacle() {
   }
 }
 
-// Le pide la pose a la Base y espera el POSITION_RESPONSE para dar el siguiente
-// paso de navegacion. Sin IP de base aborta, y si la respuesta no llega a
-// tiempo cae a la pose del EKF y sigue navegando a ciegas, porque perder de
-// vista el marcador un rato no puede abortar la corrida entera.
+// Le pide la pose a la base y espera el POSITION_RESPONSE para dar el siguiente
+// paso de navegación. Sin IP de base aborta, y si la respuesta no llega a
+// tiempo usa la pose del EKF y sigue navegando a ciegas, porque perder de vista
+// el marcador un momento no debe abortar la corrida.
 void StateRequestPosition() {
   if (robots.find("Base") == robots.end() ||
       robots["Base"] == IPAddress(0, 0, 0, 0)) {
@@ -430,8 +426,8 @@ void StateRequestPosition() {
     congregation.CompleteRequest();
 
     // La cámara no contestó: seguir con la estimación propia mientras el filtro
-    // esté sano y su incertidumbre siga siendo utilizable. Es lo que evita que
-    // una oclusión de dos segundos deje al robot plantado el resto de la prueba.
+        // esté sano y su incertidumbre sea aceptable, para que una oclusión breve no
+        // deje al robot quieto.
     if (ekf.initialized && ekf.IsHealthy() &&
         blindNavSteps < BLIND_NAV_MAX_STEPS &&
         ekf.PosSigma() < BLIND_NAV_MAX_SIGMA) {
@@ -452,9 +448,9 @@ void StateRequestPosition() {
                     robotID.c_str(), blindNavSteps, BLIND_NAV_MAX_STEPS,
                     ekf.PosSigma());
 
-      // Mismo encadenado que HandlePositionResponse cuando sí llega la pose:
-      // recalcular el slot, dar el paso de navegación y recién ahí pasar a
-      // consumir las instrucciones que ese paso dejó en la lista.
+      // Mismo encadenamiento que HandlePositionResponse cuando sí llega la pose:
+            // recalcular la ranura, dar el paso de navegación y entonces pasar a
+            // consumir las instrucciones que ese paso dejó en la lista.
       if (congregation.hasGlobalTarget && !congregation.isLeader) {
         UpdateCongregationGoal(congregation.globalTargetX,
                                congregation.globalTargetY, 0.0f);
@@ -471,9 +467,9 @@ void StateRequestPosition() {
       return;
     }
 
-    // BDI-E: sin EKF utilizable, reintentar la pregunta un número ACOTADO de
-    // veces antes de rendirse: una sola respuesta perdida no puede matar el
-    // movimiento en curso.
+    // BDI-E: sin EKF utilizable, repetir la pregunta un número acotado de veces
+        // antes de rendirse: una sola respuesta perdida no debe detener el
+        // movimiento en curso.
     if ((nav.isActive || nav.pendingInit) &&
         ++navRequestRetries <= kMaxNavRequestRetries) {
       fsmInstruction[0] = REQUEST_POSITION;
@@ -486,13 +482,13 @@ void StateRequestPosition() {
       return;
     }
     navRequestRetries = 0;
-    // BDI-E: en misión, soltar la navegación. Si quedara nav.isActive en alto
-    // el agente no volvería a deliberar hasta el guardián de 3 min; así la
-    // intención caduca por su propio reloj y el agente replanifica.
+    // BDI-E: en misión, soltar la navegación. Con nav.isActive en alto el agente
+        // no volvería a deliberar hasta el tope de 3 min; así la intención vence por
+        // su propio reloj y el agente replanifica.
     if (missionActive) BdieReleaseBody();
 
-    // Se agotó el respaldo: detenerse y decir por qué, en vez de seguir a ciegas
-    // con una estimación en la que ya no se puede confiar.
+    // Se agotó el respaldo: detenerse y avisar por qué, en vez de seguir a ciegas
+        // con una estimación en la que ya no se puede confiar.
     char buffer[120];
     snprintf(buffer, sizeof(buffer),
              "WARNING: nav detenida sin pose. EKF %s, pasos a ciegas %d/%d, "
@@ -513,24 +509,22 @@ void StateRequestPosition() {
     congregation.CompleteRequest();
     congregation.positionReceived = false;
     blindNavSteps = 0;
-    navRequestRetries = 0;          // BDI-E: la base contestó, cuenta a cero
+    navRequestRetries = 0;          // BDI-E: la base contestó; contador a cero
 
-    // nav activo: obstáculo ya en obstacles struct, ReactiveNavStep lo procesará
+    // navegación activa: el obstáculo ya está en obstacles y ReactiveNavStep lo procesará
     state = READ_INSTRUCTION;
     instructionValue = 0;
   }
 }
 
-// Maniobra de evasion. Elige el rodeo segun el patron de bits de los sensores y
+// Maniobra de evasión. Elige el rodeo según el patrón de bits de los sensores y
 // encola retroceso, giro y avance. Tras varias evasiones seguidas en el mismo
-// punto asume deadlock y hace un escape comprometido hacia el interior de la
-// arena, en vez del giro de 180° a ciegas que dejaba al robot rebotando contra
-// la misma esquina.
-/* TRAZA DE LA BÚSQUEDA (24-oct-2026). En la corrida de las 13:52 el enjambre
- * cubrió el 99 % de la arena y pasó varias veces junto al cubo sin leerlo; los
- * mensajes de la búsqueda eran DEBUG (no llegan al log) y no había forma de
- * saber en qué paso se perdía. Cada decisión de la búsqueda va ahora a la base
- * como «SEARCH|...», a lo sumo unas pocas por candidato. */
+// punto asume un bloqueo y hace un escape comprometido hacia el interior de la
+// arena, en vez de un giro ciego de 180° que lo dejaría rebotando en la misma
+// esquina.
+/* Traza de la búsqueda: cada decisión de la búsqueda por color se envía a la
+ * base como «SEARCH|...» (unas pocas por candidato), para poder reconstruir en
+ * qué paso se descartó un candidato. */
 void SearchTrace(const char *fmt, ...) {
   if (robots.find("Base") == robots.end()) return;
   char cuerpo[100];
@@ -543,7 +537,7 @@ void SearchTrace(const char *fmt, ...) {
 
 void StateActiveEvasion() {
   if (!obstacles.HasAnyObstacle()) {
-    // Sin obstáculo real — puede haber desaparecido entre detección y aquí
+    // Sin obstáculo real: puede haber desaparecido entre la detección y aquí
     MessageDebugf(
         "DEBUG: -1, ID: %s, ACTIVE_EVASION sin obstáculo. Abortando.",
         robotID.c_str());
@@ -558,12 +552,11 @@ void StateActiveEvasion() {
     obstacles.obstacleSensors = 0b010;
   }
 
-  // SEARCH activo: un obstáculo central es un CANDIDATO — aproximarse y
-  // leerle el color en vez de evadir (los laterales evaden normal)
-  // Memoria de candidatos descartados (17-oct-2026): lo que se descartó hace
-  // poco en el mismo lugar no se vuelve a revisar — se evade normal. Sin esto
-  // un objeto que no es el objetivo y no refleja (otro robot, oscuro: proximidad
-  // 65 al tocarlo) se revisaba en bucle sin fin.
+  // Búsqueda activa: un obstáculo central es un candidato; aproximarse y leer
+    // su color en vez de evadirlo (los laterales se evaden normal). Lo que se
+    // descartó hace poco en el mismo lugar no se vuelve a revisar y se evade
+    // normal; sin esa memoria, un objeto que no es el objetivo y no refleja (otro
+    // robot, oscuro) se revisaría en bucle.
   const bool yaDescartado =
       (millis() - searchRejectMs) < SEARCH_REJECT_MEMORY_MS &&
       CalculateDistance(robotPose.x, robotPose.y, searchRejectX, searchRejectY) < SEARCH_REJECT_RADIUS_MM;
@@ -587,13 +580,12 @@ void StateActiveEvasion() {
     return;
   }
 
-  // SEARCH activo y contacto SOLO lateral (12-oct-2026): antes se evadía sin
-  // mirar, y como el sensor de color ve a pocos cm el objeto que tocaba un
-  // costado no se revisaba nunca. Ahora se gira hacia ese lado y se avanza un
-  // tramo corto: si era el objeto, el APDS9960 central lo ve y el flujo de
-  // arriba lo convierte en candidato en la próxima detección. Se evade normal
-  // si el punto de contacto cae fuera de la arena (es la pared) o si ya hubo
-  // un sondeo hace menos de LATERAL_PROBE_COOLDOWN_MS (no rebotar en lo mismo).
+  // Búsqueda activa y contacto solo lateral: como el sensor de color ve a pocos
+    // centímetros, un objeto que toca un costado no se revisaría nunca. Se gira
+    // hacia ese lado y se avanza un tramo corto: si era el objeto, el APDS9960
+    // central lo ve y el flujo de arriba lo convierte en candidato en la próxima
+    // detección. Se evade normal si el punto de contacto cae fuera de la arena (es
+    // la pared) o si hubo un sondeo hace menos de LATERAL_PROBE_COOLDOWN_MS.
   if (search.active && !obstacles.centralObstacle &&
       (obstacles.leftObstacle != obstacles.rightObstacle)) {
     const bool  izq  = obstacles.leftObstacle;
@@ -672,9 +664,9 @@ void StateActiveEvasion() {
     fsmInstruction[1] = reverseDistance * 3;
     retreatSequence.push_back(fsmInstruction);
 
-    // Lado del rodeo hacia el INTERIOR de la arena (no ciego): proyecta el
-    // tramo por cada lado y toma el que queda más adentro (lejos de paredes).
-    // Corrige el thrash en esquina; espeja escape_turn() de la sim.
+    // Lado del rodeo hacia el interior de la arena: proyecta el tramo por cada
+        // lado y toma el que queda más lejos de las paredes, para no quedar
+        // rebotando en una esquina.
     float escAng   = escapeTurnDeg;
     float bestScore = -1.0e9f;
     for (int s = -1; s <= 1; s += 2) {
@@ -781,8 +773,8 @@ void StateActiveEvasion() {
                 avoidanceAngle, avoidanceDistance, needsRetreat);
 }
 
-// Retoma la instruccion que la evasion interrumpio, con el resto que quedo
-// guardado en intContext, y limpia el rastro de la evasion.
+// Retoma la instrucción que la evasión interrumpió, con el resto que quedó
+// guardado en intContext, y limpia el rastro de la evasión.
 void StateResumeAfterEvasion() {
   if (!intContext.wasInterrupted) {
     resumeScheduled = false;
@@ -796,9 +788,8 @@ void StateResumeAfterEvasion() {
       robotID.c_str(), intContext.previousState, intContext.remainingValue);
 
   if (nav.isActive) {
-    // Navegación activa: re-solicitar posición para recalcular ruta en vez
-    // de terminar a ciegas el segmento interrumpido (nav.isActive faltaba
-    // tras la migración a ReactiveNav — causaba desvíos largos al evadir)
+    // Navegación activa: volver a pedir la posición para recalcular la ruta en
+        // vez de terminar a ciegas el segmento interrumpido.
     MessageDebugf(
         "DEBUG: -1, ID: %s, GT activo: solicitando posición post-evasión",
         robotID.c_str());
@@ -846,13 +837,13 @@ void StateResumeAfterEvasion() {
   state = READ_INSTRUCTION;
 }
 
-// Aproximacion lenta al candidato hasta el alcance del APDS9960, unos pocos cm,
-// que es donde la lectura de color es confiable. Al llegar se detiene, espera
-// una lectura valida y clasifica; si el color no era el buscado o no alcanza a
-// llegar, evade y vuelve a patrullar. Validado en Webots.
+// Aproximación al candidato hasta el alcance del APDS9960 (unos pocos cm),
+// donde la lectura de color es confiable. Al llegar se detiene, espera una
+// lectura válida y clasifica; si el color no es el buscado o no alcanza a
+// llegar, evade y vuelve a patrullar.
 void StateSearchApproach() {
-  /* 24-oct: entrada desde la cola de instrucciones ({SEARCH_APPROACH, -1}), la
-   * usa la revisión de la meta cuando se corta un viaje (bdie.ino). Arranca el
+  /* Entrada desde la cola de instrucciones ({SEARCH_APPROACH, -1}): la usa la
+   * revisión de la meta cuando se corta un viaje (bdie.ino). Arranca el
    * acercamiento con los contadores en cero. */
   if (instructionValue < 0) {
     instructionValue = 0;
@@ -862,8 +853,8 @@ void StateSearchApproach() {
   }
   if (!search.active || !frontSensorInitialized) {
     ConfigureHBridge(0, 0);
-    // BDI-E: la búsqueda se desarmó a mitad del acercamiento (otro robot
-    // anunció el objetivo): devolver el control a la navegación en curso.
+    // BDI-E: la búsqueda se desarmó a mitad del acercamiento (otro robot anunció
+        // el objetivo): devolver el control a la navegación en curso.
     if (missionActive) BdieResumeAfterCandidate();
     state = READ_INSTRUCTION;
     return;
@@ -876,20 +867,18 @@ void StateSearchApproach() {
     return;
   }
 
-  // ¿Ya se puede leer? Ver la nota de SEARCH_PROX_NEAR en AttaBot.ino.
+  // ¿Ya se puede leer? Ver SEARCH_PROX_MIN_READ en AttaBot.ino.
   const uint8_t prox = frontSensor.readProximity();
   const bool leer =
       (prox >= SEARCH_PROX_NEAR) ||
       (prox >= SEARCH_PROX_MIN_READ &&
        (search.stalls >= 2 || search.steps >= SEARCH_MAX_STEPS));
   if (!leer) {
-    /* 24-oct-2026 (corrida 15:06): el Atta_2 apuntaba al cubo a 136 mm, la
-     * proximidad se quedó en 3 dos pasos seguidos (todavía fuera del alcance del
-     * APDS9960, que ve a pocos cm) y se descartó como «tope sin proximidad»: el
-     * cubo quedó marcado 30 s y lo esquivó. «Sin subir» no es «tocando»: ahora
-     * se descarta así solo si las RUEDAS no avanzaron dos pasos seguidos (tope
-     * físico contra algo que no refleja, p. ej. un robot oscuro). Si avanza y no
-     * hay nada, el corte es SEARCH_MAX_STEPS (8 × 20 mm = 160 mm). */
+    /* Que la proximidad no suba no significa que el robot esté tocando algo: el
+     * candidato puede estar todavía fuera del alcance del sensor. Solo se descarta
+     * como «tope sin proximidad» si las ruedas no avanzaron dos pasos seguidos
+     * (tope físico contra algo que no refleja, como un robot oscuro). Si avanza y
+     * no hay nada, el corte es SEARCH_MAX_STEPS (8 × 20 mm = 160 mm). */
     if (search.blocked >= 2 && prox < SEARCH_PROX_MIN_READ) {   // tocando algo que no refleja
       ConfigureHBridge(0, 0);
       SearchTrace("tope sin proximidad prox=%u pasos=%d -> descartado", prox, search.steps);
@@ -919,7 +908,7 @@ void StateSearchApproach() {
     return;
   }
 
-  // Al alcance: detenerse y esperar una lectura de color válida (~100ms)
+  // Al alcance: detenerse y esperar una lectura de color válida (~100 ms)
   ConfigureHBridge(0, 0);
   if (!frontSensor.colorDataReady()) {
     return;
@@ -927,7 +916,7 @@ void StateSearchApproach() {
   uint16_t r, g, b, c;
   frontSensor.getColorData(&r, &g, &b, &c);
   bool match = MatchColor(search.targetColor, r, g, b, c);
-  {  // 17-oct: el resultado de cada candidato va SIEMPRE a la base, no solo en DEBUG
+  {  // el resultado de cada candidato se envía siempre a la base
     char cb[110];
     snprintf(cb, sizeof(cb), "SEARCH_COLOR: prox=%u pasos=%d R=%u G=%u B=%u C=%u -> %s",
              prox, search.steps, r, g, b, c, match ? search.targetColor : "no coincide");
@@ -938,7 +927,7 @@ void StateSearchApproach() {
                 match ? search.targetColor : "no coincide");
 
   if (match) {
-    // El objeto está ~100mm frente al robot
+    // El objeto está a unos 100 mm frente al robot
     float ox = robotPose.x + 100.0f * cos(DegToRad(robotPose.angle));
     float oy = robotPose.y + 100.0f * sin(DegToRad(robotPose.angle));
     char buf[80];
@@ -950,14 +939,12 @@ void StateSearchApproach() {
     search.Reset();
     frontSensor.enableColor(false);
     instructionList.clear();
-    /* 07-nov-2026: el descubridor tiene el objetivo PEGADO al frente (prox 255).
-     * Con movementReady en false, StateStop lo tomaba por obstáculo y entraba en
-     * bucle: CHECK_OBSTACLE → IDENTIFY_OBSTACLE → ACTIVE_EVASION con un
-     * evasionStartTime viejo (> 1,5 s, «datos obsoletos») → STOP → … sin volver
-     * nunca a DELIBERATE. El agente no se marcaba llegado y los demás esperaban
-     * el temporizador de 5 min (07-nov 13:22: Atta_1 > 2 min sin salir; 24-oct
-     * 16:21: Atta_3, 34 s). El movimiento termina limpio: STOP → WAIT → DELIBERATE,
-     * y ahí el agente (iFoundIt) cuenta como llegado y espera junto al objetivo. */
+    /* El descubridor tiene el objetivo pegado al frente (proximidad 255). Si el
+     * movimiento no se diera por terminado, StateStop lo tomaría como obstáculo y
+     * entraría en un bucle de identificación y evasión sin volver a DELIBERATE, y el
+     * agente no se marcaría como llegado. El movimiento termina limpio (STOP → WAIT
+     * → DELIBERATE) y ahí el agente (iFoundIt) cuenta como llegado y espera junto
+     * al objetivo. */
     movementReady = true;
     isEvading = false;
     resumeScheduled = false;
@@ -972,10 +959,10 @@ void StateSearchApproach() {
 }
 
 // ============================================================================
-// LOOP PRINCIPAL
+// BUCLE PRINCIPAL
 // ============================================================================
 
-// Housekeeping de cada ciclo y despacho del estado en curso.
+// Tareas de cada ciclo y despacho del estado en curso.
 void loop() {
   // BDI-E: período real de loop(), para GET_STATUS
   {
@@ -993,17 +980,16 @@ void loop() {
   ReadSensors();
   SetupFrontSensor();
 
-  // Lectura IMU no bloqueante — se ejecuta solo si la IMU está disponible
-  // y han pasado al menos imuReadInterval ms desde la última lectura.
+  // Lectura no bloqueante de la IMU: solo si está disponible y pasaron al menos
+    // imuReadInterval ms desde la última lectura.
   if (imuAvailable && (millis() - lastImuRead >= imuReadInterval)) {
     lastImuRead = millis();
     LeerYaw();
     EkfTick();
   }
 
-  // Telemetría del EKF (2Hz). Es solo salida: no toca el control, corra o no
-  // EKF_NAV. Sirve para responder con datos "¿cuánto deriva el EKF?" durante las
-  // corridas que ya se hacen, en vez de tener que confiar en él sin medirlo.
+  // Telemetría del EKF (2 Hz). Es solo salida y no toca el control, esté o no
+    // activo EKF_NAV. Permite medir cuánto deriva el EKF durante las corridas.
   if (ekf.initialized && millis() - lastEkfReport >= ekfReportInterval &&
       robots.find("Base") != robots.end() &&
       robots["Base"] != IPAddress(0, 0, 0, 0)) {
@@ -1018,8 +1004,8 @@ void loop() {
   ReadSerialCommands();
 #endif
 
-  BdieLoopHook();   // BDI-E: guardián de nav, latido y búsqueda por color
-  LatTick();        // OE3: ping robot↔robot si NAV_CONFIG|LAT lo encendió
+  BdieLoopHook();   // BDI-E: guardián de la navegación, latido y búsqueda por color
+  LatTick();        // medición de latencia entre robots, si NAV_CONFIG|LAT la encendió
 
   switch (state) {
   case WAIT:
@@ -1061,7 +1047,7 @@ void loop() {
   case SEARCH_APPROACH:
     StateSearchApproach();
     break;
-  case DELIBERATE:          // BDI-E (punto 2): el ciclo de razonamiento
+  case DELIBERATE:          // BDI-E: el ciclo de razonamiento
     StateDeliberate();
     break;
   }
@@ -1071,9 +1057,9 @@ void loop() {
 // FUNCIONES AUXILIARES
 // ============================================================================
 
-// Sortea el proximo tramo del random walk: girar a un lado, al otro o avanzar,
-// con las probabilidades y las tablas de angulos y distancias de arriba. Si hay
-// un obstaculo detectado, la probabilidad de avanzar se pone en cero.
+// Sortea el próximo tramo de la caminata aleatoria: girar a un lado, al otro o
+// avanzar, con las probabilidades y las tablas de ángulos y distancias de
+// AttaBot.ino. Si hay un obstáculo detectado, la probabilidad de avanzar es 0.
 void SelectMovementRW() {
   int probabilityTurnPos = 15;
   int probabilityMove = 70 * (obstacleDetected ? 0 : 1);
@@ -1123,7 +1109,7 @@ void SelectMovementRW() {
 }
 
 #ifdef DebugSerial
-// Consola serie de diagnostico, solo con DebugSerial activo.
+// Consola serie de diagnóstico, solo con DebugSerial activo.
 void ReadSerialCommands() {
   if (Serial.available()) {
     String command = Serial.readString();
@@ -1162,14 +1148,13 @@ void ReadSerialCommands() {
 
 
 // ============================================================================
-// VIGILANTE DE MOVIMIENTO (17-oct-2026)
+// VIGILANTE DE MOVIMIENTO
 // ============================================================================
-// MoveDistanceByWheel solo termina si las ruedas llegan o si, HABIENDO girado,
-// quedan quietas 800 ms. Una rueda trabada desde el arranque (robot contra la
-// fila de robots estacionados, Atta_3 a las 12:51 y 13:03) no cumple ninguna de
-// las dos: MOVE o TURN no terminaban nunca y el agente no volvía a deliberar.
-// Cada MOVE/REVERSE/TURN tiene ahora un presupuesto de tiempo proporcional a lo
-// que pide; si se agota, se corta, se avisa a la base y se suelta el cuerpo.
+// MoveDistanceByWheel solo termina si las ruedas llegan o si, después de haber
+// girado, quedan quietas 800 ms. Una rueda trabada desde el arranque no cumple
+// ninguna de las dos, y el MOVE o TURN no terminaría nunca. Cada MOVE, REVERSE y
+// TURN tiene un presupuesto de tiempo proporcional a lo que pide; si se agota,
+// se corta, se avisa a la base y se suelta el cuerpo.
 bool MotionTimedOut() {
   return motionBudgetMs != 0 && (millis() - motionStartMs) > motionBudgetMs;
 }

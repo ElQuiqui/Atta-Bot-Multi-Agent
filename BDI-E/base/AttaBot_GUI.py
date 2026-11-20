@@ -1,11 +1,11 @@
-"""Interfaz de control del enjambre AttaBot.
+"""Interfaz de control del enjambre Atta-Bot.
 
 Muestra la cámara con las anotaciones de ArUco, el mapa de cobertura, una tabla
-con el estado de cada robot y un panel de comandos agrupados por para qué sirven.
+con el estado de cada robot y un panel de comandos agrupados por función.
 
-El despacho de comandos NO vive acá: se delega en Base.dispatch(), el mismo que
-usa la consola. Tener dos copias fue el motivo de que la GUI se quedara sin
-FORMATION, CALIBRATE ni OCCLUDE durante meses.
+El despacho de comandos no está aquí: se delega en Base.dispatch(), el mismo
+que usa la consola, para que la GUI y la consola acepten siempre los mismos
+comandos.
 """
 import os
 import sys
@@ -41,7 +41,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QSize, QTimer
 from PyQt5.QtGui import QPixmap, QImage, QFont, QColor
 
 from bdie_panel import MapaBdieWidget, MenteBdieWidget, color_robot   # BDI-E · G1
-from mision_panel import MisionBar                       # barra de misión (12-oct)
+from mision_panel import MisionBar                       # barra de misión
 
 
 # ── Paleta ───────────────────────────────────────────────────────────────────
@@ -103,8 +103,8 @@ QSplitter::handle {{ background: {BORDE}; }}
 # solo; si no se puede leer, es preferible quedarse sin nombres que inventarlos.
 FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         '..', 'Controller', 'AttaBot')
-# BDI-E V2: el sketch vive en robot/AttaBot/, no en Controller/AttaBot/. Sin
-# esto la tabla mostraba el número del estado en vez del nombre.
+# BDI-E: el sketch está en robot/AttaBot/, no en Controller/AttaBot/. Sin esto
+# la tabla mostraría el número del estado en vez del nombre.
 if not os.path.isdir(FIRMWARE):
     FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             '..', 'robot', 'AttaBot')
@@ -309,21 +309,19 @@ class AttaBotGUI(QMainWindow):
         return marco
 
     def _gruposDeComandos(self):
-        """Los comandos, GENERADOS desde el vocabulario de AttaBot_Base.
+        """Los comandos, generados desde el vocabulario de AttaBot_Base.
 
-        Los botones se llaman como el comando (MOVE, no 'Avanzar'): es lo que hay
-        que escribir en la consola, en el ConsoleLog y en Docs/comandos.md, así
-        que traducirlo obligaba a mantener un diccionario mental de más.
+                Los botones se llaman como el comando (MOVE, no 'Avanzar'): es lo que hay
+                que escribir en la consola y lo que aparece en el ConsoleLog.
 
-        Recorre _ROBOT_CMDS y _BASE_CMDS, que son la MISMA fuente que usan el
-        despachador, el autocompletado y HELP. Antes esta lista estaba escrita a
-        mano y se quedaba atrás sola: llegó a mostrar 16 de 29 comandos, y
-        después 29 de 36. Generándola, eso no puede volver a pasar.
+                Recorre _ROBOT_CMDS y _BASE_CMDS, la misma fuente que usan el
+                despachador, el autocompletado y HELP, así que la lista no puede quedar
+                desactualizada.
 
-        Cada botón es (etiqueta, ayuda, acción). Si la acción termina en '|' se
-        deja escrita en el campo para completar los argumentos; si no, se manda
-        tal cual. Los pocos comandos con un diálogo propio lo conservan.
-        """
+                Cada botón es (etiqueta, ayuda, acción). Si la acción termina en '|' se
+                deja escrita en el campo para completar los argumentos; si no, se envía
+                tal cual. Los pocos comandos con un diálogo propio lo conservan.
+                """
         # Import acá y no arriba: la GUI se puede cargar desde AttaBot_Base
         # (launch()) y un import de módulo en la cabecera sería circular.
         from AttaBot_Base import _ROBOT_CMDS, _BASE_CMDS, _CMD_GROUP
@@ -500,9 +498,9 @@ class AttaBotGUI(QMainWindow):
             if estado.isdigit() and int(estado) < len(self.ESTADOS):
                 estado = self.ESTADOS[int(estado)]
 
-            # BDI-E V2: además de si se ve AHORA, qué fracción de los cuadros de
-            # los últimos ~10 s lo detectó. Un 'sí' con 80 % es un marker que
-            # titila, y eso es lo que deja a la navegación sin pose.
+            # BDI-E: además de si se ve ahora, qué fracción de los cuadros de los
+                        # últimos ~10 s lo detectó. Un 'sí' con 80 % es un marcador que
+                        # titila, y eso deja a la navegación sin pose.
             pct = self.base.arucoPct(rid) if hasattr(self.base, 'arucoPct') else None
             visto = ('sí' if visible else 'NO') + (f' {pct:.0f}%' if pct is not None else '')
             valores = [
@@ -655,9 +653,9 @@ class AttaBotGUI(QMainWindow):
     def _dlgMascara(self):
         """SENSOR_MASK|<L|C|R>|<0|1> — ignorar un sensor.
 
-        Se usa seguido y a mano: Atta_1 tiene el infrarrojo derecho fantasma, así
-        que en cada sesión de lab hay que enmascararlo antes de navegar.
-        """
+                Sirve para enmascarar un infrarrojo que da falsos positivos antes de
+                navegar.
+                """
         sensor = self._elegir('Máscaras IR', 'Sensor:',
                               ['L — izquierdo', 'C — central', 'R — derecho'])
         if not sensor:

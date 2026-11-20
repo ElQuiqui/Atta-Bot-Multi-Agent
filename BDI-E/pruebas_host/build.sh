@@ -1,7 +1,7 @@
 #!/bin/bash
 # Uso: build.sh <carpeta del sketch> [prueba.cpp]
-# Imita el preprocesador de Arduino: prototipos automaticos, AttaBot.ino primero
-# y los demas .ino en orden alfabetico, en una sola unidad de traduccion.
+# Imita el preprocesador de Arduino: prototipos automáticos, AttaBot.ino primero
+# y los demás .ino en orden alfabético, en una sola unidad de traducción.
 H="$(cd "$(dirname "$0")" && pwd)"; S="$1"; OUT="$H/sketch.cpp"
 python3 "$H/protos.py" "$S" "$H/protos.txt" >/dev/null
 { echo '#include "Arduino.h"'

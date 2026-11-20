@@ -3,18 +3,18 @@
 Uso:
     python sigma_aruco.py ../PositionLogs/Position_Log_XX.csv [--min-s 20] [--tol 25]
 
-Busca solo los tramos en que cada robot estuvo QUIETO (la pose no se aleja más
+Busca solo los tramos en que cada robot estuvo quieto (la pose no se aleja más
 de --tol mm de la mediana del tramo durante al menos --min-s segundos) y en
 cada tramo calcula:
     σx, σy      desviación estándar de x e y (mm)
     σr          sqrt(σx² + σy²): el radio de ruido que entra al simulador
     p95         percentil 95 de la distancia a la media (mm)
-    σθ          desviación estándar CIRCULAR del ángulo (°)
-El valor que manda es el PEOR tramo (el ruido crece lejos del centro óptico).
+    σθ          desviación estándar circular del ángulo (°)
+El valor que cuenta es el del peor tramo (el ruido crece lejos del centro
+óptico).
 
-Protocolo (guía de puesta en marcha §3 · prueba 3): robot quieto 60 s en el
-centro y en las cuatro esquinas, base grabando. No hace falta anotar tiempos:
-el script encuentra los tramos solo.
+Protocolo: el robot quieto 60 s en el centro y en las cuatro esquinas, con la
+base grabando. No hace falta anotar tiempos: el script encuentra los tramos.
 """
 import csv, math, sys, argparse, statistics as st
 from collections import defaultdict

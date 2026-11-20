@@ -1,12 +1,16 @@
+// Firmware del Atta-Bot (GIRoM, TEC) con la arquitectura BDI-E integrada.
+// Las líneas que agrega BDI-E están marcadas «BDI-E»; el acople completo está
+// en bdie.ino.
+//
+// Versiones de las librerías con que se compila, sobre ESP32 Arduino core
+// 3.3.11. Hay que actualizarlas al cambiar una librería, para que un cambio de
+// librería no se confunda con una falla de hardware.
+//
+// No se usa ESP32Servo: el PWM de un servo (50 Hz, 10 bits) ocupaba el mux de
+// reloj del LEDC y dejaba sin PWM a los motores. Para volver a usar un servo,
+// ver Controller/Readme.md del repositorio del laboratorio: necesita 16 bits
+// de ancho de temporizador, y ESP32Servo 3.2.1 no permite fijarlos.
 #include "utils.h"
-// Versiones con las que se compila hoy (2026-07-29), sobre ESP32 Arduino core
-// 3.3.11. Actualizarlas al subir una librería: cuando el comentario miente, un
-// cambio de librería se confunde con una falla de hardware.
-// Ya no está ESP32Servo — el servo frontal se retiró (2026-07-29, no se usaba)
-// porque su PWM a 50Hz/10-bit se llevaba el mux de reloj del LEDC y dejaba a
-// los motores sin PWM: el robot no giraba ni avanzaba. Si algún día vuelve un
-// servo, leer primero Controller/Readme.md — necesita 16 bits de ancho de
-// timer y ESP32Servo 3.2.1 no deja ponérselos (attach() pisa el default).
 #include <Adafruit_APDS9960.h> // v1.3.1
 #include <ArduinoOTA.h>
 #include <FastLED.h>    // v3.10.5
@@ -48,7 +52,7 @@
 
 #define enableLeftInfraredSensor 5
 #define leftInfraredSensor 33
-// GPIO 26 libre: era el servo frontal, retirado el 2026-07-29.
+// GPIO 26 libre (no hay servo frontal).
 #define enableRightInfraredSensor 18
 #define rightInfraredSensor 27
 
@@ -81,29 +85,21 @@ float millimetersPerPulse = wheelCircumference / pulsesPerRev;
 float centerToWheelDistance = 41.5;
 float yawScale = 1.0f;
 
-// NO USAR radians() EN ESTE SKETCH — usar DegToRad/DegToArc.
+// No usar radians() en este sketch: usar DegToRad/DegToArc.
 //
 // FastLED hace `#undef radians` (fl/stl/undef.h) y después `using fl::radians`
-// (FastLED.h:226), así que radians() no es la macro de Arduino sino esto:
-//     template<typename T> constexpr T radians(T deg) {
-//         return deg * static_cast<T>(0.017453292519943295);
-//     }
-// La constante se castea al TIPO DEL ARGUMENTO. Con un ángulo entero,
-// static_cast<int>(0.01745…) es 0, así que radians(180) devuelve 0 y el giro
-// queda en un no-op silencioso. Con float anda bien, y de ahí el cuadro que
-// costó semanas: el robot navegaba hacia el objetivo (nav usa floats) pero no
-// esquivaba obstáculos (`int avoidanceAngle`), el RANDOM_WALK no giraba y
-// TURN|grados no hacía nada en ningún robot. Llegó con FastLED 3.10.5
-// (2026-07-27); antes la macro de Arduino promovía todo a double.
-// Estos helpers usan la constante literal en float y toman float a propósito:
-// fuerzan la promoción en el call site y no dependen ni de FastLED ni de
-// DEG_TO_RAD. Diagnosticado el 2026-07-29, ver Controller/Readme.md.
+// (FastLED.h), así que radians() no es la macro de Arduino sino una plantilla
+// que convierte la constante al tipo del argumento. Con un ángulo entero,
+// static_cast<int>(0.01745…) es 0 y radians(180) devuelve 0: el giro queda en
+// un no-op silencioso. Estos auxiliares usan la constante literal en float y
+// toman float, así que fuerzan la promoción en la llamada y no dependen ni de
+// FastLED ni de DEG_TO_RAD. Ver Controller/Readme.md del laboratorio.
 inline float DegToRad(float degrees) {
   return degrees * 0.017453292519943295f;
 }
 
-// Grados de giro en el lugar → arco (mm) que recorre cada rueda. Única vía
-// permitida para esa conversión, que antes vivía repetida en 9 lugares.
+// Grados de giro en el lugar → arco (mm) que recorre cada rueda. Es la única
+// vía para esa conversión en todo el sketch.
 inline float DegToArc(float degrees) {
   return DegToRad(degrees) * centerToWheelDistance;
 }
@@ -128,13 +124,12 @@ kalmanFilter kfPID(6.0, 1.0, 1.0);
 const int observationPeriod = 28800;
 const int observationTime = 1600;
 const int numberOfCycles = observationPeriod / observationTime;
-// BDI-E · LA RANURA IR NO SE SORTEA (punto 10).
-// Eran `const int` inicializados con random() durante el arranque de las
-// globales — ANTES de randomSeed(ESP.getEfuseMac()) en setup(). Con el
-// generador sin sembrar todos los robots obtenían LA MISMA ranura, emitían a la
-// vez y se leían mutuamente como obstáculo. Ahora se derivan del ID que asigna
-// la base (BdieOnConfigId, bdie.ino). Sortearlas por robot tampoco serviría:
-// con 5 robots y 18 ranuras la colisión es ~46 %.
+// BDI-E · La ranura de emisión IR se deriva del ID que asigna la base
+// (BdieOnConfigId en bdie.ino), en vez de sortearse con random() al inicializar
+// las globales, antes de randomSeed() en setup(): con el generador sin sembrar,
+// todos los robots obtenían la misma ranura, emitían a la vez y se leían
+// mutuamente como obstáculo. Sortearla por robot tampoco basta: con 5 robots y
+// 18 ranuras, la probabilidad de colisión es de un 46 %.
 int lateralCycle = 0;
 int centralCycle = numberOfCycles / 2;
 const unsigned minObstacleTime = 1350;
@@ -145,24 +140,20 @@ const float maxRobotAngleMargin = 80;
 const int obstacleWaitTime = 600;
 const int reverseDistance = -40;
 
-// Escape de deadlock (ACTIVE_EVASION tras N evasiones): giro de rodeo de 95°
-// hacia el interior de la arena, en vez del giro 180° ciego, con un tramo de
-// 300mm. Espeja escape_turn() de la réplica de sim (attabot_firmware.py). El
-// lado se elige proyectando el tramo por cada lado y tomando el que queda más
-// adentro, con DISP_ARENA como límites.
+// Escape de bloqueo (ACTIVE_EVASION tras N evasiones): giro de rodeo de 95°
+// hacia el interior de la arena, en vez de un giro ciego de 180°, con un tramo
+// de 300 mm. El lado se elige proyectando el tramo por cada lado y tomando el
+// que queda más adentro, con DISP_ARENA como límites.
 const float escapeTurnDeg = 95.0f;
 const float escapeMoveMm  = 300.0f;
 
-// Arena del escenario en curso (marco cámara). NO es constante: la base la
-// envía con NAV_CONFIG|ARENA|w|h al registrar cada robot, porque cambia por
-// escenario (4 robots = 2400×1750, 10 robots = 3800×2800).
+// Arena del escenario en curso (marco de la cámara). No es constante: la base
+// la envía con NAV_CONFIG|ARENA|w|h al registrar cada robot.
 float arenaWidthMm  = 2400.0f;
 float arenaHeightMm = 1750.0f;
 
-// Límites de los saltos de dispersión: la arena en curso menos un inset, para
-// que ningún salto apunte a la pared. Antes eran cuatro #define fijos al montaje
-// de 2400×1550 del lab, así que en cualquier otro escenario los robots se
-// dispersaban contra un borde imaginario.
+// Límites de los saltos de dispersión: la arena en curso menos un margen,
+// para que ningún salto apunte a la pared.
 #define DISP_INSET 350.0f
 #define DISP_ARENA_XMIN DISP_INSET
 #define DISP_ARENA_XMAX (arenaWidthMm - DISP_INSET)
@@ -183,10 +174,10 @@ const std::array<int, 7> possibleAngles = {30, 45, 60, 75, 90, 135, 180};
 const std::array<int, 4> possibleAdvances = {200, 250, 300, 350};
 enum possibleDirections { TURN_POS = 0, MOVE_FORWARD, TURN_NEG };
 
-// Filtro de saltos bruscos al actualizar la pose: un salto de mas de 500mm o de
-// mas de 179° entre lecturas se descarta por misread de la camara. Tras tres
-// rechazos seguidos se acepta igual, porque a esa altura el que esta mal es el
-// modelo interno y hay que re-sincronizar con la camara.
+// Filtro de saltos bruscos al actualizar la pose: un salto de más de 500 mm o
+// de más de 179° entre lecturas se descarta como error de la cámara. Tras tres
+// rechazos seguidos se acepta igual, porque entonces el que está mal es el
+// modelo interno y hay que volver a sincronizarse con la cámara.
 const float max_pose_jump = 500;
 const float max_angle_jump = 179;
 const int max_pose_jump_rejections = 3;
@@ -209,15 +200,15 @@ int minLowBatteryTime = 200;
 // Contador de mensajes
 int countMessages = 0;
 
-// Sensor frontal (APDS9960). Si no arranca al principio se reintenta cada 5s,
-// porque el bus I2C a veces no esta listo en el primer intento.
+// Sensor frontal (APDS9960). Si no arranca al principio se reintenta cada 5 s,
+// porque el bus I2C a veces no está listo en el primer intento.
 bool frontSensorInitialized = false;
 unsigned long lastFrontSensorAttempt = 0;
 const unsigned long frontSensorRetryInterval = 5000;
 volatile bool lateralSensorsEnabled = false;
 
 // ============================================================================
-// VARIABLES GLOBALES REFACTORIZADAS (usando estructuras de utils.h)
+// VARIABLES GLOBALES (estructuras definidas en utils.h)
 // ============================================================================
 
 InterruptionContext intContext;
@@ -241,124 +232,107 @@ DisperseState disperse;
 EKFState ekf;
 SearchState search;
 
-// SEARCH_OBJECT: PWM de aproximación lenta, umbral de readProximity() a partir
-// del cual el objeto está al alcance, y tope de la fase de acercamiento.
-// Acercamiento al candidato (17-oct-2026). Antes: PWM fijo de 70 a lazo
-// abierto hasta proximidad 180. En el laboratorio ese PWM NO movía al robot
-// (Atta_2 pasó >60 s en SEARCH_APPROACH con la pose clavada a proximidad 10),
-// así que nunca llegaba a leer el color. Ahora avanza en pasos cortos con el
-// PID de las ruedas (el mismo MoveDistanceByWheel de MOVE; R2: el PID no se
-// toca, solo se usa) y lee el color cuando: llega a SEARCH_PROX_NEAR, o la
-// proximidad deja de subir dos pasos seguidos (está tocando), o agotó los pasos
-// — siempre que la proximidad sea al menos SEARCH_PROX_MIN_READ.
-const int SEARCH_CREEP_PWM = 70;             // ya no se usa para avanzar
+// SEARCH_OBJECT: acercamiento al candidato. El robot avanza en pasos cortos
+// con el PID de las ruedas (el mismo MoveDistanceByWheel de MOVE) y lee el
+// color cuando llega a SEARCH_PROX_NEAR, cuando la proximidad deja de subir
+// dos pasos seguidos (está tocando) o cuando agota los pasos, siempre que la
+// proximidad sea al menos SEARCH_PROX_MIN_READ.
+const int SEARCH_CREEP_PWM = 70;             // sin uso: el acercamiento es por pasos con el PID
 const uint8_t SEARCH_PROX_NEAR = 180;
-// Medido el 17-oct con los tres robots PEGADOS al cubo rojo: proximidad 255
-// (saturada) y color inequívoco (R÷G 7,0–8,3; R÷B 2,9–5,3). A unos pocos cm la
-// proximidad era 33–41 y el color quedaba en el límite (R÷G 1,05–1,77), así que
-// leer ahí da falsos negativos. Se lee solo desde ~60 % del valor de contacto.
+// Con el robot pegado al objetivo rojo la proximidad satura en 255 y el color
+// es inequívoco (R÷G de 7,0 a 8,3); a pocos centímetros la proximidad baja a
+// 33–41 y el color queda en el límite (R÷G de 1,05 a 1,77), con falsos
+// negativos. Por eso solo se lee desde un 60 % del valor de contacto.
 const uint8_t SEARCH_PROX_MIN_READ = 150;
 const float SEARCH_STEP_MM = 20.0f;
 const int SEARCH_MAX_STEPS = 8;              // 160 mm como máximo
 const unsigned long SEARCH_STEP_MAX_MS = 1500;   // paso que no termina = está tocando
 const unsigned long SEARCH_APPROACH_TIMEOUT = 12000;
-// Memoria de candidatos descartados (17-oct-2026, ver StateActiveEvasion)
+// Memoria de candidatos descartados (ver StateActiveEvasion).
 const unsigned long SEARCH_REJECT_MEMORY_MS = 30000;
 const float SEARCH_REJECT_RADIUS_MM = 200.0f;
 float searchRejectX = -1e6f, searchRejectY = -1e6f;
 unsigned long searchRejectMs = 0;
-// Sondeo lateral en búsqueda (12-oct-2026, ver StateActiveEvasion): ángulo del
-// giro hacia el lado del contacto, tramo de avance para que el APDS9960 central
-// llegue a ver el objeto, y tiempo mínimo entre sondeos.
+// Sondeo lateral en búsqueda (ver StateActiveEvasion): ángulo del giro hacia
+// el lado del contacto, tramo de avance para que el APDS9960 central llegue a
+// ver el objeto y tiempo mínimo entre sondeos.
 const float LATERAL_PROBE_DEG = 40.0f;
 const float LATERAL_PROBE_MM  = 80.0f;
 const unsigned long LATERAL_PROBE_COOLDOWN_MS = 4000;
 unsigned long lastLateralProbeMs = 0;
-/* SONDEO LATERAL FINO (24-oct-2026). Corrida 15:06: el Atta_3 rozó el cubo a
- * 31 mm con el cubo 13° a la izquierda; el sondeo de entonces retrocedía 40 mm,
- * giraba 40° de una vez y avanzaba 80 mm: el giro se pasaba del cubo (quedaba
- * 27° hacia el otro lado) y el retroceso lo sacaba del alcance del APDS9960.
- * Ahora retrocede poco y barre hacia ese lado en pasos de 10° con una pausa
- * corta: si en cualquier paso el sensor central lo ve, el giro se interrumpe y
- * el obstáculo pasa a ser candidato (como en el barrido de celda). Si en 60° no
- * aparece nada, vuelve al centro del barrido (±30°) y avanza un tramo corto. */
+/* Sondeo lateral fino: tras un contacto lateral, el robot retrocede poco y
+ * barre hacia ese lado en pasos de 10° con una pausa corta; si en cualquier
+ * paso el sensor central ve algo, el giro se interrumpe y el obstáculo pasa a
+ * ser candidato (como en el barrido de celda). Si en 60° no aparece nada,
+ * vuelve al centro del barrido (±30°) y avanza un tramo corto. Un giro grande
+ * de una sola vez se pasa del objetivo, y un retroceso largo lo saca del
+ * alcance del sensor. */
 const int   LATERAL_PROBE_REVERSE_MM = -20;
 const float LATERAL_PROBE_STEP_DEG   = 10.0f;
 const int   LATERAL_PROBE_STEPS      = 6;
 const unsigned long LATERAL_PROBE_PAUSE_MS = 120;
-/* Espera entre sondeos (24-oct): en la misma corrida, el segundo roce del cubo
- * cayó dentro de los 4 s de espera y se esquivó sin mirar. Si el contacto está
- * a menos de LATERAL_PROBE_SAME_MM del anterior se permite UN sondeo más sin
- * esperar (la espera existe para no rebotar indefinidamente en lo mismo). */
+/* Si un contacto ocurre a menos de LATERAL_PROBE_SAME_MM del anterior, se
+ * permite un sondeo más sin esperar el tiempo mínimo (que existe para no
+ * rebotar indefinidamente contra lo mismo). */
 const float LATERAL_PROBE_SAME_MM    = 120.0f;
 float lastLateralProbeX = -9999, lastLateralProbeY = -9999;
 int   lateralProbeSeguidos = 0;
-/* VIAJE CORTADO JUNTO A LA META (24-oct): en BUSCAR, si el tope de viaje corta
- * un viaje a menos de BDIE_REVISAR_META_MM de la meta, lo más probable es que lo
- * que no lo deja llegar esté EN esa celda —en la corrida 15:06, 6 viajes del
- * Atta_2 a celdas junto al cubo se cortaron así—. Antes de soltar, gira hacia la
+/* Viaje cortado junto a la meta: en BUSCAR, si el tope de viaje corta un
+ * viaje a menos de BDIE_REVISAR_META_MM de la meta, lo más probable es que lo
+ * que impide llegar esté en esa celda. Antes de soltar, el robot gira hacia la
  * meta y hace un acercamiento de candidato hacia ella. */
 const float BDIE_REVISAR_META_MM = 300.0f;
 
-// Exposicion del canal de COLOR del APDS9960: ganancia (1/4/16/64x) y tiempo de
-// integracion en ms. El begin() de la libreria arranca en 4x y 10ms, y con eso
-// la arena da C≈30 sobre un fondo de escala de 65535: a ese nivel una cuenta es
-// el 10% del valor y las razones entre canales con las que decide MatchColor
-// son ruido de cuantizacion. Se barren en vivo con COLOR_READ|<ganancia>|<ms>.
-// NO tocan la proximidad, que corre por otro registro (PGAIN).
-// Medido en la arena el 2026-08-13 sobre el obstaculo beige: 4x/10ms daba C≈30
-// (ruido puro), 16x/50ms da C≈760 y 64x/100ms da C≈6200 sobre 65535 — ~1% de
-// precision en las razones entre canales y todavia 10x de margen antes de
-// saturar. El sensor resulto lineal en la exposicion a un 3%.
+// Exposición del canal de color del APDS9960: ganancia (1/4/16/64x) y tiempo
+// de integración en ms. El begin() de la librería arranca en 4x y 10 ms, y con
+// eso la arena da C≈30 sobre una escala de 65535: una cuenta es el 10 % del
+// valor y las razones entre canales con que decide MatchColor son ruido de
+// cuantización. Con 64x y 100 ms, C≈6200: cerca de 1 % de precisión en las
+// razones y todavía 10x de margen antes de saturar (el sensor es lineal en la
+// exposición a un 3 %). Se ajustan en vivo con COLOR_READ|<ganancia>|<ms>, y
+// no afectan a la proximidad, que usa otro registro (PGAIN).
 const uint8_t COLOR_GAIN_DEFAULT = 64;
 const uint16_t COLOR_INTEGRATION_MS_DEFAULT = 100;
-// El tope de integracion no es el del chip (~709ms) sino el que HandleColorRead
-// puede esperar sin dejar de atender la red.
+// El tope de integración no es el del chip (~709 ms) sino lo que
+// HandleColorRead puede esperar sin dejar de atender la red.
 const uint16_t COLOR_INTEGRATION_MS_MAX = 200;
 uint8_t colorGain = COLOR_GAIN_DEFAULT;
 uint16_t colorIntegrationMs = COLOR_INTEGRATION_MS_DEFAULT;
 
-// Balance de blancos del canal de color, POR ROBOT (COLOR_WB, persistido en
-// NVS). Cada canal se divide por lo que ESE sensor lee sobre el patron neutro
-// —el obstaculo beige de la arena—, con lo que el patron da (1,1,1) en todos y
-// un solo umbral vuelve a valer para la flota.
+// Balance de blancos del canal de color, por robot (COLOR_WB, guardado en
+// NVS). Cada canal se divide por lo que ese sensor lee sobre el patrón neutro
+// (el obstáculo beige de la arena), con lo que el patrón da (1,1,1) en todos y
+// un mismo umbral sirve para toda la flota. Entre sensores del mismo modelo, la
+// fracción de azul sobre el mismo patrón llega a variar un 37 %, suficiente
+// para que un robot sin calibrar confunda el beige con rojo.
 //
-// Medido el 2026-08-13 con los 4 robots mirando el MISMO obstaculo desde casi
-// el MISMO punto (dispersion de luz 8.9%): la fraccion de azul iba de 0.239
-// (Atta_3) a 0.328 (Atta_2) — 37% entre piezas del mismo modelo y distinto
-// lote. Con eso Atta_3 daba el beige por ROJO (razon 1.518 contra el 1.5 de
-// umbral) de forma repetible, en dos exposiciones y dos posiciones.
-//
-// (0,0,0) = sin calibrar: MatchColor compara los canales crudos, como antes.
+// (0,0,0) = sin calibrar: MatchColor compara los canales crudos.
 uint16_t colorWbR = 0, colorWbG = 0, colorWbB = 0;
-// Cuanto tiene que destacar un canal sobre los otros dos para dar el color por
-// bueno. Con el balance puesto, el neutro queda en 1.0 en los tres canales, asi
-// que este numero pasa a ser margen limpio sobre el fondo.
+// Cuánto tiene que destacar un canal sobre los otros dos para dar el color por
+// bueno. Con el balance aplicado, el neutro queda en 1,0 en los tres canales,
+// así que este número es margen limpio sobre el fondo.
 const float COLOR_MATCH_K = 1.5f;
 
 ObstacleState obstacles;
 MovementMetrics movement;
 LedController ledCtrl;
 
-// Lectura del IMU a 50Hz, por debajo del ODR del DMP (~112Hz).
+// Lectura de la IMU a 50 Hz, por debajo de la tasa de salida del DMP (~112 Hz).
 unsigned long lastImuRead = 0;
 const unsigned long imuReadInterval = 20;
 
-// Reporte pasivo del EKF a la base, para VALIDARLO sin que controle nada.
-// El EKF corre siempre como observador (EKF_NAV arranca apagado), así que
-// mandando su pose se puede medir cuánto deriva contra el ArUco durante las
-// corridas normales: la base lo escribe en la misma fila del PositionLog que la
-// pose de cámara, y el error queda como una resta de columnas. Sin esto la única
-// forma de verlo era polear GET_STATUS a mano. 2Hz alcanza para medir deriva.
+// Reporte pasivo del EKF a la base, para validarlo sin que controle nada. El
+// EKF corre siempre como observador (EKF_NAV arranca apagado); la base escribe
+// su pose en la misma fila del PositionLog que la pose de la cámara, y la
+// deriva se calcula como una resta de columnas. 2 Hz basta para medirla.
 unsigned long lastEkfReport = 0;
 const unsigned long ekfReportInterval = 500;
 
 // Navegación a ciegas: cuando la cámara no contesta el REQUEST_POSITION, el
 // robot sigue con la pose del EKF en vez de abandonar la navegación. Se limita
 // por dos lados porque la odometría sola se degrada rápido: un tope de pasos
-// seguidos sin ver la cámara, y un tope de incertidumbre del propio filtro. Al
-// pasarse cualquiera de los dos el robot se detiene y avisa, que es lo honesto;
-// lo que no puede pasar es lo de antes, quedarse quieto al primer timeout.
+// seguidos sin cámara y un tope de incertidumbre del filtro. Al superar
+// cualquiera de los dos, el robot se detiene y avisa.
 int blindNavSteps = 0;
 const int BLIND_NAV_MAX_STEPS = 8;
 const float BLIND_NAV_MAX_SIGMA = 250.0f;
@@ -395,16 +369,16 @@ RobotState state = WAIT;
 float instructionValue = 100;
 bool movementReady = true;
 
-// Navegación reactiva unificada (GT + congregación). EKF_NAV|1 pasa la nav a la
-// pose del EKF en vez del ArUco crudo; arranca apagado para poder A/B-testearlo
-// contra el comportamiento conocido.
+// Navegación reactiva unificada (ir a un punto y congregación). EKF_NAV|1 pasa
+// la navegación a la pose del EKF en vez del ArUco crudo; arranca apagado.
 ReactiveNav nav;
 bool ekfNavEnabled = false;
 
-// Giro cerrado en yaw: el arco restante se re-apunta con el IMU en cada ciclo y
-// al final se corrige el residuo. imuTurnPrevYaw sirve para el unwrap
-// incremental y imuTurnAccumDeg guarda el giro medido sin wrap, de modo que
-// soporta arcos de más de 180°. imuTurnTargetDeg lleva signo (+ = CCW).
+// Giro cerrado en guiñada: el arco restante se reorienta con la IMU en cada
+// ciclo y al final se corrige el residuo. imuTurnPrevYaw sirve para desenvolver
+// el ángulo de forma incremental e imuTurnAccumDeg guarda el giro medido sin
+// envolver, de modo que admite arcos de más de 180°. imuTurnTargetDeg lleva
+// signo (+ = antihorario).
 bool  imuTurnActive = false;
 bool  imuTurnIsCorrection = false;
 int   imuTurnCorrCount = 0;
@@ -414,16 +388,14 @@ float imuTurnAccumDeg = 0.0f;
 float imuTurnTargetDeg = 0.0f;
 unsigned long imuTurnSettleUntil = 0;
 
-// Constantes del giro asistido, todas medidas contra el ArUco:
-//   BrakeLead      cortar motores 3° antes, que la inercia (coast de 2-12°)
-//                  completa el giro;
-//   SettleMs       ventana para que ese coast termine antes de verificar;
+// Constantes del giro asistido, medidas contra el ArUco:
+//   BrakeLead      cortar motores 3° antes: la inercia (2–12°) completa el giro;
+//   SettleMs       ventana para que esa inercia termine antes de verificar;
 //   Tolerance      residuo bajo el cual el giro se da por bueno;
 //   MaxCorrections tope de correcciones por giro, para no perseguir el ruido
-//                  del gyro indefinidamente.
-// La corrección del residuo se hace SIN brake-lead (imuTurnIsCorrection): en
-// arcos chicos el coast reservado se comía la corrección entera, y un comando
-// de -5.3° terminaba girando 0.8°.
+//                  del giroscopio indefinidamente.
+// La corrección del residuo se hace sin BrakeLead (imuTurnIsCorrection): en
+// arcos pequeños la inercia reservada se comería la corrección entera.
 const float imuTurnBrakeLead = 3.0f;
 const unsigned long imuTurnSettleMs = 400;
 const float imuTurnTolerance = 3.0f;
@@ -431,18 +403,18 @@ const int imuTurnMaxCorrections = 4;
 
 const int instructionCompletedDelay = 400;
 
-// Pausas del paso de navegación (ReactiveNavStep), antes fijas en 300 ms
-// (17-oct-2026). Arrancan en 300/300 = comportamiento idéntico al anterior; se
-// bajan EN VIVO para comparar A/B sin reflashear:
+// Pausas del paso de navegación (ReactiveNavStep), ajustables en vivo:
 //    NAV_CONFIG|WAIT_TURN|80    NAV_CONFIG|WAIT_MOVE|150
-//  - tras el GIRO: el giro asistido ya termina con su espera (imuTurnSettleMs).
-//  - tras el AVANCE: la base responde la mediana de las últimas 3 detecciones
-//    ArUco (~150 ms a 20 fps); hay que esperar a que sean del robot detenido.
+//  - tras el giro: el giro asistido ya termina con su propia espera
+//    (imuTurnSettleMs);
+//  - tras el avance: la base responde con la mediana de las últimas tres
+//    detecciones ArUco (~150 ms a 20 fps); hay que esperar a que sean del robot
+//    ya detenido.
 unsigned long navWaitAfterTurnMs = 300;
 unsigned long navWaitAfterMoveMs = 300;
 
-// Vigilante de movimiento y esperas a robots (17-oct-2026, ver estados.ino).
-// MOVE de 150 mm → 3 s + 3,75 s; TURN de 180° (arco 130 mm) → 5 s + 5,2 s.
+// Vigilante de movimiento y esperas a otros robots (ver estados.ino).
+// MOVE de 150 mm → 3 s + 3,75 s; TURN de 180° (arco de 130 mm) → 5 s + 5,2 s.
 const unsigned long MOTION_MOVE_BASE_MS = 3000;
 const float         MOTION_MOVE_MS_PER_MM = 25.0f;
 const unsigned long MOTION_TURN_BASE_MS = 5000;
@@ -477,7 +449,7 @@ ICM_20948_I2C imu;
 Preferences preferences;
 
 // ============================================================================
-// DECLARACIONES FORWARD DE FUNCIONES
+// DECLARACIONES ADELANTADAS DE FUNCIONES
 // ============================================================================
 
 // Setup y configuración
@@ -527,8 +499,8 @@ bool IsRobotObstacle(float x2, float y2, float angle, int sensors, String id);
 char DecidirPaso(int yo, int otro, bool meMuevo);   // negociación de paso, navegacion.ino
 const char *NombrePaso(char p);
 void ReadSerialCommands();
-// Nota: CalculateDistance, NormalizeAngle e InRange están definidas inline en utils.h
-// Se redeclaran aquí para garantizar visibilidad desde este translation unit
+// CalculateDistance, NormalizeAngle e InRange están definidas inline en utils.h;
+// se vuelven a declarar aquí para que sean visibles desde esta unidad.
 inline float CalculateDistance(float x1, float y1, float x2, float y2);
 inline float CalculateAngleToTarget(float x1, float y1, float x2, float y2);
 inline float NormalizeAngle(float angle);
@@ -552,73 +524,69 @@ bool MotionTimedOut();
 void AbortMotion(const char *que);
 
 // ═══ BDI-E ═══════════════════════════════════════════════════════════════════
-// Va ACÁ y no arriba: mission.h §2 usa nav, instructionList, fsmInstruction,
-// SendMessage y robots, y todos tienen que estar declarados antes. Las
-// funciones viven en bdie.ino.
-#include "mission.h"        // protocolo + pegamento; arrastra bdi.h y los demás
-#include "telemetry.h"      // qué piensa el agente → base (solo observación)
+// Va aquí y no arriba: la parte de Arduino de mission.h usa nav,
+// instructionList, fsmInstruction, SendMessage y robots, que deben estar
+// declarados antes. Las funciones del acople están en bdie.ino.
+#include "mission.h"        // protocolo y acople; incluye bdi.h y los demás encabezados
+#include "telemetry.h"      // telemetría de razonamiento hacia la base (solo observación)
 bdie::Agent agent;
 // Telemetría a la base: 0 apagada, 1 solo THINK, 2 THINK + BMAP (por omisión).
-// BDIE_TELEM|n la cambia en vivo. No la lee ningún robot: la misión no depende.
+// BDIE_TELEM|n la cambia en vivo. Ningún robot la lee: la misión no depende de ella.
 uint8_t            bdieTelemMode = 2;
 bdie::TelemTicker  bdieTelem;
 bool        missionActive  = false;
-uint32_t    deliberationUs = 0;   // costo del ciclo BDI → GET_STATUS
-uint32_t    loopPeriodUs   = 0;   // período real de loop() → GET_STATUS
+uint32_t    deliberationUs = 0;   // costo del ciclo BDI, reportado en GET_STATUS
+uint32_t    loopPeriodUs   = 0;   // período real de loop(), reportado en GET_STATUS
 // Color del objetivo de la misión; TARGET_COLOR|<color> lo cambia en vivo.
 char        bdieTargetColor[12] = "rojo";
 bool        bdieOwnsSearch = false;   // la búsqueda la armó BDI-E, no la base
 bool        bdieOwnsMeet   = false;   // el MEET en curso lo pidió BDI-E, no la base
-// Barrido al llegar a cada celda en BUSCAR (17-oct-2026, ver StateDeliberate).
-// Barrido CORTO: gira +bdieScanHalfDeg y después −2·bdieScanHalfDeg, así el
-// sensor frontal mira el frente y los dos costados (±45°) en ~1–2 s. El giro de
-// 360° de la primera versión costaba ~4 s por celda y en la arena se veía de más.
-// Queda a −45° del rumbo: el paso siguiente de la navegación lo re-alinea igual.
+// Barrido al llegar a cada celda en BUSCAR (ver StateDeliberate en bdie.ino):
+// gira +bdieScanHalfDeg y después −2·bdieScanHalfDeg, así el sensor frontal
+// mira el frente y los dos costados (±45°) en 1 a 2 s. Termina a −45° del
+// rumbo; el paso siguiente de la navegación lo vuelve a alinear.
 //   NAV_CONFIG|SCAN|0     apagado
 //   NAV_CONFIG|SCAN|1     encendido (con el ángulo vigente)
 //   NAV_CONFIG|SCAN|<g>   semiángulo de g grados (10–179); 180 = giro completo
 bool        bdieScanEnabled  = true;
 bool        bdieScanPending  = false;
 float       bdieScanHalfDeg  = 45.0f;
-// Tope de un viaje de exploración en misión (bdie.ino, BdieLoopHook 1b).
-// Medido el 17-oct: ~900 mm en 25 s con evasión → 30 ms/mm deja margen ×1,8.
-/* CANDIDATO AUNQUE PAREZCA ROBOT (24-oct-2026). Corrida de las 13:52: el
- * enjambre cubrió el 100 % sin leer el cubo. De las 13 detecciones CENTRALES
- * junto al cubo, 11 tenían a otro robot a < 260 mm y ±80° del frente
- * (robotDistanceMargin / maxRobotAngleMargin), que contestó OBSTACLE_DETECTED
- * «soy yo»: el que veía el cubo esperaba y lo esquivaba, nunca se acercaba a
- * leerlo. Con los robots amontonados alrededor de la última celda sin visitar
- * —la del cubo— pasa casi siempre. En búsqueda, un obstáculo central se revisa
- * igual: si era el robot, el acercamiento por pasos topa sin proximidad (las
- * carcasas no reflejan) y queda descartado 30 s. NAV_CONFIG|CAND_ROBOT|0 vuelve
- * al comportamiento del laboratorio. */
+// Tope de un viaje de exploración en misión (bdie.ino, punto 1b del enganche
+// de loop()). Un viaje con evasión recorre unos 900 mm en 25 s; 30 ms/mm deja
+// un margen de 1,8 veces.
+/* Candidato aunque parezca robot. Cuando otro robot está a menos de 260 mm y
+ * dentro de ±80° del frente (robotDistanceMargin / maxRobotAngleMargin),
+ * contesta OBSTACLE_DETECTED «soy yo», y el que ve el obstáculo espera y lo
+ * esquiva sin acercarse a leerlo; con los robots agrupados cerca de la última
+ * celda sin visitar, que suele ser la del objetivo, eso pasa casi siempre. En
+ * búsqueda, un obstáculo central se revisa igual: si era un robot, el
+ * acercamiento por pasos topa sin proximidad (las carcasas no reflejan) y queda
+ * descartado 30 s. NAV_CONFIG|CAND_ROBOT|0 vuelve al comportamiento del
+ * laboratorio. */
 bool searchCandAunqueRobot = true;
-/* NEGOCIACIÓN DE PASO ENTRE ROBOTS (05-nov-2026). Corridas del 24-oct: el que
- * preguntaba CHECK_OBSTACLE y recibía «soy yo» esperaba a que el otro se
- * apartara, aunque el otro estuviera QUIETO (15:05, t = 1120 s: Atta_2 esperó
- * ~25 s a un Atta_1 sin navegación activa) o esperara a su vez al primero
- * (16:32, t = 67 s: los dos se esperaban mutuamente). Ahora el que contesta dice
- * también qué va a hacer — OBSTACLE_DETECTED|id|QUIETO|SIGO|CEDO — y la simetría
- * se rompe con la misma regla del reparto de zonas: el MENOR ID tiene el paso.
- *   QUIETO  no estoy navegando: no me voy a mover → el que pregunta evade ya.
- *   SIGO    me muevo y tengo el paso (mi ID es menor) → el que pregunta evade ya.
- *   CEDO    me muevo y te cedo el paso (mi ID es mayor) → el que pregunta espera
+/* Negociación de paso entre robots. El que pregunta CHECK_OBSTACLE y recibe
+ * «soy yo» esperaría a que el otro se aparte aunque el otro esté quieto o lo
+ * esté esperando a su vez. Por eso el que contesta dice también qué va a
+ * hacer, OBSTACLE_DETECTED|id|QUIETO|SIGO|CEDO, y la simetría se rompe con la
+ * misma regla del reparto de zonas: el menor ID tiene el paso.
+ *   QUIETO  no está navegando y no se va a mover → el que pregunta evade ya.
+ *   SIGO    se mueve y tiene el paso (su ID es menor) → el que pregunta evade ya.
+ *   CEDO    se mueve y cede el paso (su ID es mayor) → el que pregunta espera
  *           como en el laboratorio; el otro, al preguntar a su vez, recibe SIGO
- *           y evade. Si aun así no se aparta, sigue valiendo IDENT_ROBOT_MAX.
+ *           y evade. Si aun así no se aparta, rige IDENT_ROBOT_MAX.
  * NAV_CONFIG|PASO|0 vuelve al protocolo del laboratorio (respuesta sin tercer
  * campo y espera siempre). Es retrocompatible: un robot sin este cambio ignora
  * el tercer campo, y una respuesta sin él se trata como la del laboratorio. */
 bool pasoNegociado = true;
-/* LATENCIA ENTRE ROBOTS (05-nov-2026) — instrumento de OE3, no de la misión.
- * Con NAV_CONFIG|LAT|1 (o |<ms>) el robot difunde LAT_PING|seq|t_us|id por el
- * MISMO broadcast que usan HB, TGT y ZC/ZA; cada compañero lo devuelve directo
- * (LAT_PONG|seq|t_us|id_B) y el que preguntó le reporta a la base
- * LAT|id_B|rtt_ms|enviados|recibidos. La ida y vuelta es COTA SUPERIOR de la
- * latencia de difusión robot→robot (rtt = difusión + vuelta ≥ difusión) y no
- * necesita relojes sincronizados. Incluye el paso por loop() de los dos robots:
- * es la latencia que vive el agente, no la del aire. Los contadores son
- * acumulados, así que la pérdida se calcula aunque se pierda algún LAT a la
- * base. Apagado por omisión: la misión no lo necesita. Ver latencia.ino. */
+/* Latencia entre robots (instrumentación, no la usa la misión). Con
+ * NAV_CONFIG|LAT|1 (o |<ms>) el robot difunde LAT_PING|seq|t_us|id por la misma
+ * difusión que usan HB, TGT, ZC y ZA; cada compañero lo devuelve directo
+ * (LAT_PONG|seq|t_us|id_B) y el que preguntó reporta a la base
+ * LAT|id_B|rtt_ms|enviados|recibidos. La ida y vuelta es una cota superior de
+ * la latencia de difusión entre robots y no necesita relojes sincronizados;
+ * incluye el paso por loop() de los dos robots, es decir, la latencia que vive
+ * el agente. Los contadores son acumulados, así que la pérdida se calcula
+ * aunque se pierda algún LAT. Apagado por omisión. Ver latencia.ino. */
 uint32_t latPeriodoMs = 0;                 // 0 = apagado
 uint32_t latSeq = 0, latEnviados = 0, latUltimoMs = 0;
 bool     latArrancado = false;
@@ -629,11 +597,11 @@ void HandleLatPing(const std::array<String, 6> &arguments);
 void HandleLatPong(const std::array<String, 6> &arguments);
 const unsigned long BDIE_NAV_BASE_MS   = 15000;
 const float         BDIE_NAV_MS_POR_MM = 30.0f;
-// BDIE_SILENCIO|s (prueba, 14-oct-2026): hasta este millis() el robot no manda
-// ni escucha mensajes del enjambre. Reproduce una desconexión sin tocar el router.
+// BDIE_SILENCIO|s (prueba): hasta este millis() el robot no envía ni escucha
+// mensajes del enjambre. Reproduce una desconexión sin tocar el router.
 uint32_t    bdieSilencioHasta = 0;
-// Reintentos ACOTADOS de REQUEST_POSITION cuando no hay EKF para seguir a
-// ciegas: una sola respuesta perdida no puede matar el movimiento en curso.
+// Reintentos acotados de REQUEST_POSITION cuando no hay EKF para seguir a
+// ciegas: una sola respuesta perdida no debe detener el movimiento en curso.
 static const int kMaxNavRequestRetries = 3;
 int         navRequestRetries = 0;
 
@@ -684,8 +652,8 @@ void i2cScan() {
 }
 
 // Encoder en cuadratura de la rueda izquierda. Compara la lectura anterior con
-// la nueva y suma o resta segun la transicion, de modo que el conteo lleva
-// signo y sobrevive a los rebotes.
+// la nueva y suma o resta según la transición, de modo que el conteo lleva
+// signo y tolera los rebotes.
 void IRAM_ATTR LeftWheelPulses() {
   int MSB = digitalRead(leftEncoderC2);
   int LSB = digitalRead(leftEncoderC1);
@@ -714,7 +682,7 @@ void IRAM_ATTR RightWheelPulses() {
 }
 
 // Flanco del infrarrojo izquierdo. Solo anota el instante: el filtro por
-// duracion minima corre en ReadSensors, fuera de la interrupcion.
+// duración mínima corre en ReadSensors, fuera de la interrupción.
 void IRAM_ATTR DetectLeftObstacle() {
   if (lateralSensorsEnabled && digitalRead(leftInfraredSensor) == LOW) {
     leftObsStartTime = micros();
@@ -728,8 +696,8 @@ void IRAM_ATTR DetectRightObstacle() {
   }
 }
 
-// Aviso de bateria baja. Anota el instante para que el filtro por duracion
-// descarte los bajones momentaneos que produce el arranque de los motores.
+// Aviso de batería baja. Anota el instante para que el filtro por duración
+// descarte las caídas momentáneas que produce el arranque de los motores.
 void LowBattery() {
   if (digitalRead(batteryStatus) == LOW) {
     lowBatteryTime = millis();
@@ -740,9 +708,9 @@ void LowBattery() {
 // FUNCIONES DE SETUP Y CONFIGURACIÓN
 // ============================================================================
 
-// Carga los pulsos por revolucion desde NVS, o guarda el valor por defecto la
-// primera vez. Cada robot tiene el suyo: se calibran contra ArUco y se midieron
-// diferencias de ~2% entre unidades.
+// Carga los pulsos por revolución desde NVS, o guarda el valor por defecto la
+// primera vez. Cada robot tiene el suyo, calibrado contra ArUco (difieren
+// alrededor de un 2 % entre unidades).
 void InitializePPR() {
   preferences.begin("attabot-config", false);
 
@@ -791,7 +759,7 @@ void SaveColorWhiteBalance(uint16_t r, uint16_t g, uint16_t b) {
   DebugSerialPrintf("Balance de blancos guardado: %u/%u/%u\n", r, g, b);
 }
 
-// Persiste un PPR nuevo y recalcula lo que depende de el.
+// Guarda un PPR nuevo y recalcula lo que depende de él.
 void SavePPR(float newPPR) {
   preferences.begin("attabot-config", false);
   preferences.putFloat("ppr", newPPR);
@@ -799,7 +767,7 @@ void SavePPR(float newPPR) {
   DebugSerialPrintf("PPR guardado permanentemente: %.2f\n", newPPR);
 }
 
-// Carga las constantes del PID desde NVS, o guarda las de fabrica la primera
+// Carga las constantes del PID desde NVS, o guarda las de fábrica la primera
 // vez.
 void InitializePID() {
   preferences.begin("attabot-config", false);
@@ -827,7 +795,7 @@ void InitializePID() {
   }
 }
 
-// Persiste constantes de PID nuevas.
+// Guarda constantes de PID nuevas.
 void SavePID(float kp, float ki, float kd) {
   preferences.begin("attabot-config", false);
   preferences.putInt  ("pid_res", pwm_resolution);
@@ -839,8 +807,8 @@ void SavePID(float kp, float ki, float kd) {
                     pwm_resolution, kp, ki, kd);
 }
 
-// Persiste los sesgos de giroscopo y acelerometro que dejo la calibracion del
-// DMP, para no tener que repetirla en cada arranque.
+// Guarda los sesgos de giroscopio y acelerómetro que dejó la calibración del
+// DMP, para no repetirla en cada arranque.
 void SaveIMUBias(biasStore* store) {
   preferences.begin("attabot-config", false);
   preferences.putInt("bias_gx", store->biasGyroX);
@@ -856,34 +824,33 @@ void SaveIMUBias(biasStore* store) {
   DebugSerialPrintln("Bias IMU guardados en Preferences");
 }
 
-// Recalcula la constante de conversion pulso->mm. Hay que llamarla despues de
-// cambiar el PPR o la circunferencia de rueda.
+// Recalcula la constante de conversión pulso → mm. Hay que llamarla después de
+// cambiar el PPR o la circunferencia de la rueda.
 void updateMillimetersPerPulse() {
   millimetersPerPulse = wheelCircumference / pulsesPerRev;
 }
 
-// Arranque: pines, PWM de motores, interrupciones de encoder e infrarrojos,
-// carga de la configuracion persistida, LED, IMU, sensor frontal, WiFi y OTA.
+// Arranque: pines, PWM de motores, interrupciones de encoders e infrarrojos,
+// configuración guardada, LED, IMU, sensor frontal, WiFi y OTA.
 //
-// El arranque se escalona con un retardo aleatorio: con varios robots
-// encendiendo a la vez, todos pedian IP en el mismo instante y el AP dejaba
-// afuera a alguno.
+// El arranque se escalona con un retardo aleatorio: si varios robots encienden
+// a la vez, todos piden IP en el mismo instante y el punto de acceso deja fuera
+// a alguno.
 void setup() {
 #ifdef DebugSerial
   Serial.begin(115200);
   delay(500);
   Serial.println("\n\n=== INICIO DE SETUP ===");
 #endif
-  // BDI-E: el chip en una línea, para el Cap. 4 (R9: cómputo cerca del límite)
+  // BDI-E: datos del chip en una línea (cómputo disponible)
   DebugSerialPrintf("[0] %s rev%d, %d nucleos a %u MHz, flash %u MB, "
                     "PSRAM %u B, SDK %s, MAC %012llX\n",
                     ESP.getChipModel(), ESP.getChipRevision(), ESP.getChipCores(),
                     ESP.getCpuFreqMHz(), ESP.getFlashChipSize() / 1048576,
                     ESP.getPsramSize(), ESP.getSdkVersion(), ESP.getEfuseMac());
 
-  // Delay aleatorio para evitar colisiones DHCP cuando múltiples ESP32 arrancan
-  // juntos Usa la MAC address como semilla para que cada robot tenga un delay
-  // único
+  // Retardo aleatorio para evitar colisiones de DHCP cuando varios ESP32
+  // arrancan juntos; la MAC es la semilla, así cada robot tiene un retardo propio.
   randomSeed(ESP.getEfuseMac());
   unsigned long startupDelay = random(100, 2000);
   DebugSerialPrintf("Esperando %lu ms antes de iniciar WiFi...\n",
@@ -898,14 +865,12 @@ void setup() {
   InitializePID();
   DebugSerialPrintln("[1b] PID OK");
 
-  // Reloj del LEDC clavado en APB (80MHz), antes de cualquier canal (con
-  // canales ya tomados la llamada falla a propósito). Por defecto el driver va
-  // en LEDC_AUTO_CLK y lo elige el PRIMER periférico que se attachea; los
-  // motores a 1kHz/14-bit necesitan 16.384MHz de fuente, que solo sale de APB,
-  // y los 4 timers low-speed comparten un único mux de reloj. Cuando el servo
-  // frontal (50Hz/10-bit) se lo llevaba al reloj lento, los ledcAttach() de
-  // los motores fallaban y el robot no giraba ni avanzaba (2026-07-29). El
-  // servo ya no está, pero esto deja el reloj explícito en vez de heredado.
+  // Reloj del LEDC fijado en APB (80 MHz) antes de crear cualquier canal (con
+  // canales ya tomados la llamada falla a propósito). Por defecto el driver usa
+  // LEDC_AUTO_CLK y el reloj lo elige el primer periférico que se conecta; los
+  // motores a 1 kHz y 14 bits necesitan una fuente de 16,384 MHz, que solo da
+  // APB, y los cuatro temporizadores de baja velocidad comparten un único mux de
+  // reloj. Fijarlo aquí deja el reloj explícito en vez de heredado.
   DebugSerialPrintln("[2] Fijando reloj del LEDC en APB...");
   if (!ledcSetClockSource(LEDC_USE_APB_CLK))
     DebugSerialPrintln("[2] AVISO: no se pudo fijar el reloj del LEDC en APB");
@@ -919,12 +884,12 @@ void setup() {
                                 "incompatibles, o algo más se quedó con el "
                                 "reloj del LEDC (ver nota en [2])\n",
                                  pwm_freq, pwm_resolution);
-  // Frecuencia REAL del timer, no la pedida: si el LEDC tuvo que ajustar (o si
-  // otro periférico le movió el reloj), acá se ve. Debe leer 1000Hz.
-  // ledcReadFreq() mide el CANAL y devuelve 0 si el duty es 0 (core 3.3.11,
-  // esp32-hal-ledc.c:411), y en el arranque las ruedas están quietas: hay que
-  // darle un duty mínimo para que la lectura sea legible. 1/16384 son 61ns de
-  // pulso, muy por debajo del 20% que el puente H necesita para mover el motor.
+  // Frecuencia real del temporizador, no la pedida: si el LEDC tuvo que ajustar
+  // (u otro periférico le movió el reloj), aquí se ve. Debe leer 1000 Hz.
+  // ledcReadFreq() mide el canal y devuelve 0 si el ciclo de trabajo es 0, y en
+  // el arranque las ruedas están quietas: se le da un ciclo mínimo para poder
+  // leerla. 1/16384 son 61 ns de pulso, muy por debajo del 20 % que el puente H
+  // necesita para mover el motor.
   ledcWrite(leftMotorForward, 1);
   uint32_t realPwmFreq = ledcReadFreq(leftMotorForward);
   ledcWrite(leftMotorForward, 0);
@@ -938,7 +903,7 @@ void setup() {
   i2cScan();
   DebugSerialPrintln("[4] I2C OK");
 
-  // IMPORTANTE: setHostname DEBE estar ANTES de WiFi.begin()
+  // setHostname debe ir antes de WiFi.begin().
   DebugSerialPrintln("[5] Inicializando WiFi...");
   WiFi.mode(WIFI_STA);
   String hostname = "AttaBot-" + String((uint32_t)ESP.getEfuseMac(), HEX);
@@ -947,9 +912,8 @@ void setup() {
   DebugSerialPrintf("Iniciando WiFi con hostname: %s\n", hostname.c_str());
   WiFi.begin(ssid, password);
 
-  // BDI-E: sin esto la radio duerme entre balizas y el ida y vuelta se va a
-  // ~110 ms (medido el 28-sep-2026, p1_arranque.py, 117 muestras). El umbral
-  // comprometido entre robots es 200 ms: el ahorro se comía la mitad.
+  // BDI-E: sin esto la radio duerme entre balizas y el tiempo de ida y vuelta
+  // sube a unos 110 ms, más de la mitad del límite de 200 ms entre robots.
   WiFi.setSleep(false);
 
   DebugSerialPrintln("[5] WiFi iniciado (sin ahorro de energia)");
@@ -1004,8 +968,8 @@ void setup() {
                   DetectRightObstacle, FALLING);
   DebugSerialPrintln("[9] Sensores OK");
 
-  // IMPORTANTE: La IMU debe inicializarse ANTES que el APDS9960.
-  // Invertir este orden rompe silenciosamente la init del ICM-20948 en el bus I2C.
+  // La IMU debe inicializarse antes que el APDS9960: invertir el orden rompe
+  // sin aviso la inicialización del ICM-20948 en el bus I2C.
   DebugSerialPrintln("[10] Inicializando IMU ICM-20948...");
   setupIMU();
   if (imuAvailable) {

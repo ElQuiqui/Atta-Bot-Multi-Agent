@@ -28,9 +28,9 @@ from datetime import datetime
 
 import bdie_checks as CK
 
-# rep / racu / zfb (14-oct-2026): ronda del reparto por mensajes, si el robot la
-# dio por acordada, y cuántas veces usó el respaldo por conocimiento común.
-# vivos = los que el robot OYE (antes: los que veía la cámara).
+# rep / racu / zfb: ronda del reparto por mensajes, si el robot la dio por
+# acordada y cuántas veces usó el reparto de respaldo. vivos = los robots que el
+# robot oye.
 CAMPOS_THINK = ["tlog", "id", "t", "fase", "deseo", "plan", "meta", "celda", "zona",
                 "enzona", "x", "y", "obj", "dueno", "cobj", "cerr", "lleg", "meet",
                 "vivos", "delib", "cob", "ev", "tev", "reint", "sinprog",
@@ -271,8 +271,8 @@ class BdieMonitor:
             self._alerta(tlog, rid, "V5", f"R{rid}: transición ilegal {prev['fase']} → {d['fase']}",
                          cada_s=0)
         cob = d.get("cob", 0)
-        # 17-oct: al abortar o terminar (SEGURO/FIN/IDLE) el robot borra a propósito
-        # la memoria de la corrida; la cobertura que baja ahí no es un defecto.
+        # Al abortar o terminar (SEGURO/FIN/IDLE) el robot borra a propósito la
+                # memoria de la corrida; que la cobertura baje ahí no es un defecto.
         if d.get("fase") in ("SEGURO", "FIN", "IDLE"):
             self._cobMax[rid] = cob
         if prev is not None and d.get("fase") == prev.get("fase") and cob < self._cobMax.get(rid, 0):

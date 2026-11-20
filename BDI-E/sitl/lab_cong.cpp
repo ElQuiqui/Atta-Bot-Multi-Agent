@@ -1,29 +1,30 @@
 /*****************************************************************************
- * lab_cong.cpp — la congregación DEL LABORATORIO, compilada para el banco
+ * lab_cong.cpp — Congregación del laboratorio, compilada para el banco
  *
  * BDI-E no tiene congregación propia: al conocer el objetivo le pide un MEET
- * al firmware del laboratorio (bdie.ino §CONGREGACIÓN). Para que el banco mida
- * esa congregación y no una imitación, este archivo COMPILA las funciones del
- * laboratorio tal cual: extraer_lab.py las copia de los .ino de robot/AttaBot a
- * lab_cong_gen.inc y acá se incluyen DENTRO de la estructura LabBody.
+ * al firmware del laboratorio (sección de congregación de bdie.ino). Para que
+ * el banco mida esa congregación y no una imitación, este archivo compila las
+ * funciones del laboratorio tal cual: extraer_lab.py las copia de los .ino de
+ * robot/AttaBot a lab_cong_gen.inc, y aquí se incluyen dentro de la estructura
+ * LabBody.
  *
- * El truco es ése: dentro de la estructura, las globales del sketch
- * (congregation, nav, disperse, robotPose, instructionList…) son MIEMBROS, así
- * que cada robot del banco tiene su propio estado y las cinco copias no se
- * pisan. El código de las funciones no cambia ni una letra.
+ * Dentro de la estructura, las globales del sketch (congregation, nav,
+ * disperse, robotPose, instructionList…) son miembros, así que cada robot del
+ * banco tiene su propio estado y las copias no se pisan. El código de las
+ * funciones no cambia.
  *
- * Lo que NO viene del laboratorio, y se declara:
- *   · SendMessage, MessageDebugf  — radio y registro: el banco no los necesita.
- *   · SmoothLeaderPose            — solo lo usa un LÍDER; en el MEET no hay.
- *   · MaybeDisperseHop            — la dispersión está apagada en la misión
- *                                   (disperse.target = 0 → retorna de entrada).
- *   · agent.OnSlotReached()       — el enganche hacia el agente, que en el banco
- *                                   vive en otra biblioteca; acá levanta una
- *                                   bandera que bdie_sim.py le pasa al agente.
+ * Lo que no viene del laboratorio:
+ *   · SendMessage, MessageDebugf  radio y registro: el banco no los necesita.
+ *   · SmoothLeaderPose            solo lo usa un líder, y en el MEET no hay.
+ *   · MaybeDisperseHop            la dispersión está apagada en la misión
+ *                                 (disperse.target = 0).
+ *   · agent.OnSlotReached()       el enganche hacia el agente, que en el banco
+ *                                 está en otra biblioteca; aquí levanta una
+ *                                 bandera que bdie_sim.py le pasa al agente.
  *
  * Compila en C++17 contra los stubs de pruebas_host/ (Arduino.h y compañía),
- * en su propia unidad de traducción: los macros de Arduino (PI, min, max) no
- * se mezclan con los headers de BDI-E.
+ * en su propia unidad de traducción, para que las macros de Arduino (PI, min,
+ * max) no se mezclen con los encabezados de BDI-E.
  *****************************************************************************/
 #include "Arduino.h"
 #include "utils.h"
@@ -50,10 +51,10 @@ struct LabBody {
     int    blindNavSteps = 0;
     float  arenaWidthMm  = 2400.0f;
     float  arenaHeightMm = 1750.0f;
-    float  centerToWheelDistance = 41.5f;   // AttaBot.ino:81
+    float  centerToWheelDistance = 41.5f;   // como en AttaBot.ino
     bool   missionActive = true;            // el banco solo corre misiones
     bool   bdieOwnsMeet  = false;
-    unsigned long navWaitAfterTurnMs = 300;  // AttaBot.ino (17-oct): pausas de ReactiveNavStep
+    unsigned long navWaitAfterTurnMs = 300;  // pausas de ReactiveNavStep, como en AttaBot.ino
     unsigned long navWaitAfterMoveMs = 300;
 
     struct AgentProxy {                     // agent.OnSlotReached() → bandera
@@ -68,9 +69,9 @@ struct LabBody {
         *ox = x; *oy = y; *oa = a;
     }
     void MaybeDisperseHop() {}
-    void BdieMarcarBarrido() {}             // el barrido de celda (17-oct) no existe en el banco
+    void BdieMarcarBarrido() {}             // el barrido de celda no existe en el banco
 
-    // ── El código del laboratorio, verbatim ─────────────────────────────────
+    // ── El código del laboratorio, tal cual ─────────────────────────────────
 #include "lab_cong_gen.inc"
 };
 
@@ -144,8 +145,8 @@ int lab_pop(void* h, int* kind, float* value) {
     return 1;
 }
 /* El guardián de BdieLoopHook (bdie.ino): nav.HasTimedOut() solo se evalúa
- * dentro de ReactiveNavStep, que no corre mientras el robot espera a un par;
- * el robot lo evalúa en cada loop() y suelta el cuerpo. Devuelve 1 si soltó. */
+ * dentro de ReactiveNavStep, que no corre mientras el robot espera a otro; el
+ * robot lo evalúa en cada loop() y suelta el cuerpo. Devuelve 1 si lo soltó. */
 int lab_guardian(void* h) {
     LabBody* b = (LabBody*)h;
     if (b->nav.isActive && b->nav.HasTimedOut()) {

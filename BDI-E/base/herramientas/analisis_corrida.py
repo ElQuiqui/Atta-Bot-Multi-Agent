@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""Análisis de una corrida del enjambre a partir de los logs de la base (24-oct-2026).
+"""Análisis de una corrida del enjambre a partir de los registros de la base.
 
 Uso:
     python analisis_corrida.py                  # la corrida más reciente
-    python analisis_corrida.py --think BdieLogs/BDIE_17-10_15-02-33_think.csv
-    python analisis_corrida.py --desde 300 --hasta 900   # una ventana (s del log)
+    python analisis_corrida.py --think BdieLogs/BDIE_<fecha>_think.csv
+    python analisis_corrida.py --desde 300 --hasta 900   # una ventana (s del registro)
     python analisis_corrida.py --csv resumen.csv         # agrega una fila por corrida
 
-Saca SOLO lo que está en los logs; lo que hay que anotar a mano (colisiones,
-intervenciones, posición real del objeto) va en la hoja de corrida.
+Calcula solo lo que está en los registros; lo que se anota a mano (colisiones,
+intervenciones, posición medida del objeto) va en la hoja de corrida.
 
-  Misión:   inicio (primer DESPLEGAR), detección (primer obj=1) y quién halló,
-            cobertura en la detección, cierre de la congregación (primer VOLVER),
-            FIN por robot, ABORT/SEGURO, desenlace.
+  Misión:   inicio (primer DESPLEGAR), detección (primer obj=1) y descubridor,
+            cobertura en la detección, cierre de la congregación (primer
+            VOLVER), FIN por robot, ABORT/SEGURO y desenlace.
   Estabilidad (prueba de 10 min): por robot, latidos HB recibidos por la base,
             pérdida estimada por número de secuencia, hueco máximo entre HB,
-            huecos > 3 s (= «caído» para el enjambre), reinicios (la secuencia
-            vuelve a empezar), huecos de pose > 1 s, vigilantes de movimiento
-            y de viaje que saltaron.
-  Latencia entre robots (OE3, 05-nov-2026): las filas LAT|B|rtt|env|rec que
-            reporta cada robot con NAV_CONFIG|LAT|1 — por par A→B y en total:
-            mediana, p95 y máximo de la ida y vuelta, % ≤ 200 ms y pérdida.
-            `--lat` saca SOLO esto, de la consola, sin necesitar el think
-            (la prueba de estabilidad puede correr sin misión).
+            huecos de más de 3 s («caído» para el enjambre), reinicios (la
+            secuencia vuelve a empezar), huecos de pose de más de 1 s y
+            vigilantes de movimiento y de viaje que saltaron.
+  Latencia entre robots: las filas LAT|B|rtt|env|rec que reporta cada robot con
+            NAV_CONFIG|LAT|1, por par A→B y en total: mediana, p95 y máximo de
+            la ida y vuelta, porcentaje ≤ 200 ms y pérdida. `--lat` calcula
+            solo esto, desde la consola, sin necesitar el think (la prueba de
+            estabilidad puede correr sin misión).
 """
 import argparse, csv, glob, os, re, sys
 from collections import defaultdict
@@ -31,7 +31,7 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.dirname(AQUI)
 CAIDA_S = 3.0      # mismo umbral que el agente: 3 s sin oír a un par = caído
 HUECO_POSE_S = 1.0
-UMBRAL_LAT_MS = 200   # requerimiento DE INGENIERÍA, sin respaldo del cliente (CLAUDE.md §2.bis)
+UMBRAL_LAT_MS = 200   # límite de latencia entre robots
 PASADA_MM = 200    # centro del robot a menos de esto del centro del cubo = «pasó al lado»
 
 def ultimo(patron):
@@ -158,7 +158,7 @@ def analizar(think, consola, desde, hasta):
                     hb[p[1]].append((t, int(p[4])))
             elif m.startswith('OBJECT_FOUND|') and hallo is None:
                 hallo = r['robot']
-            elif m.startswith('SEARCH|'):          # 24-oct: trazas de la búsqueda
+            elif m.startswith('SEARCH|'):          # trazas de la búsqueda
                 q = m.split('|')
                 if len(q) >= 4:
                     tipo = re.sub(r'[\d=().,-]+.*$', '', q[3]).strip() or q[3][:20]
@@ -230,8 +230,8 @@ def analizar(think, consola, desde, hasta):
                 if perdidos >> j & 1:
                     v['bajas'] += 1; v['detalle'][j] += 1
         prev[r['id']] = m
-    # 24-oct: el objeto de verdad (la cámara o «Objeto» del GUI) y las pasadas
-    # cerca de él que NO terminaron en detección.
+    # El objetivo según la cámara (o según «Objeto» en la GUI) y las pasadas
+        # cerca de él que no terminaron en detección.
     obj = None
     mapas = think.replace('_think.csv', '_mapas.jsonl')
     if os.path.exists(mapas):

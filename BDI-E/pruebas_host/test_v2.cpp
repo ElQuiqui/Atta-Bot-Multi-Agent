@@ -1,6 +1,7 @@
-// Prueba de integración en host: el sketch V2 completo (todos los .ino del
-// laboratorio + bdie.ino + los headers) contra stubs de hardware, con reloj y
-// red simulados. No prueba física: prueba que los enganches se encadenan.
+// Prueba de integración en la PC: el sketch completo (todos los .ino del
+// laboratorio, bdie.ino y los encabezados) compilado contra stubs de hardware,
+// con reloj y red simulados. No prueba la física: prueba que los enganches se
+// encadenan como se espera.
 #include <cassert>
 static int fails = 0;
 #define CHECK(c, msg) do{ if(c) printf("  ok   %s\n", msg); else { printf("  FALLA %s\n", msg); fails++; } }while(0)
@@ -8,10 +9,9 @@ static void step(int n=1){ for(int i=0;i<n;i++){ g_ms += 5; loop(); } }
 static bool sent(const char* pfx){ for(auto&s:g_out) if(s.rfind(pfx,0)==0) return true; return false; }
 static bool sentHas(const char* pfx, const char* sub){ for(auto&s:g_out) if(s.rfind(pfx,0)==0 && s.find(sub)!=std::string::npos) return true; return false; }
 static void poses(float x,float y,float a,unsigned ep){ char b[96]; snprintf(b,96,"POSES|%u|2:%.0f:%.0f:%.0f;",ep,x,y,a); g_in.push_back(b); }
-// Cuerpo de juguete para el tramo de congregación: los TURN/MOVE se dan por
-// terminados en el acto (los stubs no tienen encoders ni IMU) y la base contesta
-// cada REQUEST_POSITION con el robot YA en la meta vigente de la navegación.
-// Prueba el encadenamiento de la lógica del laboratorio, no la física.
+// Cuerpo de juguete para el tramo de congregación: los TURN y MOVE se dan por
+// terminados de inmediato (los stubs no tienen encoders ni IMU) y la base
+// contesta cada REQUEST_POSITION con el robot ya en la meta vigente.
 static unsigned g_ep = 100;
 static float g_px = 500, g_py = 500;
 static int drive(int maxIter, bool (*hasta)()){
@@ -50,11 +50,11 @@ int main(){
   CHECK(reqpos, "la navegación pregunta su pose a la base (lazo de ReactiveNav)");
   g_out.clear(); step(300);
   CHECK(sent("HB|2|"), "latido HB sale mientras navega (Comunicar en loop)");
-  // ── Reparto por mensajes (14-oct-2026) ───────────────────────────────────
+  // ── Reparto por mensajes ──────────────────────────────────────────────────
   step(200);   // el reporte ZA se repite cada 2 s: la ventana tiene que cubrirlo
   CHECK(sentHas("ZA|", "|2|") && agent.rp.adopted && agent.bel.myZone == 0 && agent.assign.kz == 1,
         "solo en la arena: acuerda consigo mismo (k=1, franja 0) y lo reporta con ZA");
-  g_in.push_back("ZC|1:6|1|0|3"); step(2);      // un par (ID 1) reclama la franja 0
+  g_in.push_back("ZC|1:6|1|0|3"); step(2);      // otro robot (ID 1) reclama la franja 0
   CHECK(agent.bel.peer[1].heard && agent.rp.peer[1].valid && agent.rp.peer[1].zone == 0,
         "ZC de un par entra por comandos.ino -> Feed -> OnZoneClaim, y cuenta como «lo oí»");
   bool zc=false;
@@ -75,21 +75,21 @@ int main(){
   CHECK(!BdieEnSilencio() && sent("HB|2|"), "pasado el silencio, vuelve a latir");
   CHECK(search.active && bdieOwnsSearch, "búsqueda por color del lab armada en exploración");
   CHECK(!strcmp(search.targetColor,"rojo"), "color objetivo por defecto: rojo");
-  // La base difunde NEIGHBOR_POSITIONS a 1 Hz desde el arranque (insumo del MEET)
+  // La base difunde NEIGHBOR_POSITIONS a 1 Hz desde el arranque (lo usa el MEET)
   g_in.push_back("NEIGHBOR_POSITIONS|2,500,500;1,1500,900;3,300,1200"); step(2);
   // Hallazgo por la ruta del laboratorio: MatchColor positivo en SEARCH_APPROACH
   BdieTargetConfirmed(); state = STOP;   // como en StateSearchApproach
   CHECK(agent.bel.targetKnown && agent.bel.targetOwner == 2, "hallazgo -> agente conoce el objetivo, dueño 2");
-  // Llega enseguida el hallazgo de un par de menor ID (antes de que el 2, como
-  // descubridor-ancla, cierre solo la congregación con quórum de 1).
+  // Llega enseguida el hallazgo de un robot de menor ID, antes de que el 2, como
+    // descubridor y ancla, cierre solo la congregación con quórum de 1.
   g_in.push_back("TGT|1|1|900|300");
   g_out.clear(); step(50);
   CHECK(sent("TGT|"), "TGT difundido");
   step(20);
   CHECK(!search.active, "búsqueda desarmada al conocer el objetivo");
-  // (el descubridor como ancla se prueba más abajo, en una sesión nueva: acá
-  //  enseguida llega un TGT de menor ID y el robot deja de ser el descubridor)
-  // Cambia el objetivo: gana el descubridor de menor ID
+  // El descubridor como ancla se prueba más abajo, en una sesión nueva: aquí
+    // llega enseguida un TGT de menor ID y el robot deja de ser el descubridor.
+    // Cambia el objetivo: gana el descubridor de menor ID.
   g_out.clear(); g_in.push_back("TGT|1|1|900|300"); step(4);
   drive(400, meetArmado);
   CHECK(agent.bel.targetOwner == 1 && meetArmado() &&
@@ -127,7 +127,7 @@ int main(){
   bool mA=missionActive; missionActive=false; SearchEvadeAndResume();
   CHECK(instructionList.back()[0]==RANDOM_WALK, "fuera de misión, SEARCH_OBJECT del lab intacto (RANDOM_WALK)");
   missionActive=mA;
-  // Sondeo lateral en búsqueda (12-oct): contacto solo izquierdo en mitad de la arena
+  // Sondeo lateral en búsqueda: contacto solo izquierdo en mitad de la arena
   auto contactoIzq=[](float x,float y,float a){ instructionList.clear(); obstacles.Clear();
     obstacles.leftObstacle=true; obstacles.obstacleSensors=0b100; evasionStartTime=millis();
     robotPose.x=x; robotPose.y=y; robotPose.angle=a; search.active=true; StateActiveEvasion(); };
@@ -152,22 +152,23 @@ int main(){
     for(int k=0;k<200 && !movio;k++){ step(1); if(state==MOVE) movio=true; }
     CHECK(!missionActive && movio, "tras ABORT (SEGURO) el robot vuelve a obedecer comandos manuales (MOVE|-100)");
     instructionList.clear(); state=STOP; step(2); }
-  // 17-oct: una sesión nueva empieza de cero (objetivo, llegada, feromona, cobertura)
+  // Una sesión nueva empieza de cero (objetivo, llegada, feromona, cobertura)
   { CHECK(!agent.bel.targetKnown && agent.map.CoverageCells() == 0 && !agent.bel.congregationClosed,
           "SESSION|ABORT ya borra la memoria de la corrida (objetivo, cobertura, cierre)");
     g_in.push_back("SESSION|START|2|1250|800"); step(2);
     CHECK(!agent.bel.targetKnown && !agent.bel.arrivedAtPlace && !agent.bel.congregationClosed &&
           agent.map.CoverageCells() <= 1 && agent.bel.phase == bdie::PH_DESPLEGAR,
           "SESSION|START nuevo limpia objetivo, llegada, cierre, feromona y cobertura de la corrida anterior");
-    // 17-oct: el descubridor se queda como ancla de la congregación
+    // El descubridor se queda como ancla de la congregación
     for(int k=0;k<5;k++){ poses(500,500,0,ep++); step(4); }
     BdieTargetConfirmed(); state = STOP;
     for(int k=0;k<200 && !llego();k++){ poses(500,500,0,ep++); step(2); }
     CHECK(llego() && !meetArmado() && agent.bel.iFoundIt,
           "el descubridor no corre el MEET: cuenta como llegado y espera junto al objetivo");
     g_in.push_back("SESSION|ABORT"); step(4); instructionList.clear(); state=STOP; step(2);
-    // 07-nov: lo mismo por la ruta REAL (SEARCH_APPROACH + MatchColor) y con el cubo
-    // PEGADO al frente (prox 255): antes quedaba en bucle CHECK_OBSTACLE sin deliberar.
+    // Lo mismo por la ruta real (SEARCH_APPROACH + MatchColor) y con el objetivo
+        // pegado al frente (proximidad 255): debe volver a deliberar, sin quedar en
+        // bucle de CHECK_OBSTACLE.
     g_in.push_back("SESSION|START|2|1250|800"); step(2);
     for(int k=0;k<5;k++){ poses(500,500,0,ep++); step(4); }
     g_apdsProx=255; g_apdsR=900; g_apdsG=300; g_apdsB=400; g_apdsC=1200;
@@ -176,14 +177,14 @@ int main(){
     state=SEARCH_APPROACH; instructionValue=0; search.BeginApproach(millis());
     int checks=0; g_out.clear();
     for(int k=0;k<300 && !llego();k++){ poses(500,500,0,ep++);
-      if(state!=SEARCH_APPROACH){ obstacles.centralObstacle=true; obstacles.obstacleSensors=0b010; }  // el cubo sigue ahí
+      if(state!=SEARCH_APPROACH){ obstacles.centralObstacle=true; obstacles.obstacleSensors=0b010; }  // el objetivo sigue ahí
       step(2); }
     for(auto&m:g_out) if(m.find("CHECK_OBSTACLE")!=std::string::npos) checks++;
     CHECK(agent.bel.iFoundIt && llego() && checks<=1,
           "descubridor con el cubo pegado (prox 255): delibera y cuenta como llegado, sin bucle de CHECK_OBSTACLE");
     g_apdsProx=0; g_apdsR=g_apdsG=g_apdsB=g_apdsC=0;
     g_in.push_back("SESSION|ABORT"); step(4); instructionList.clear(); state=STOP; step(2);
-    // 07-nov: re-escaneo tras «datos obsoletos» → evade de verdad (antes: STOP↔IDENTIFY sin fin)
+    // Volver a explorar tras «datos obsoletos» debe terminar en una evasión real
     g_apdsProx=255; search.active=false; missionActive=false; instructionList.clear(); g_out.clear();
     movementReady=false; isEvading=true; evasionStartTime=millis()-5000; state=STOP;
     bool evadio=false; checks=0;
@@ -195,19 +196,19 @@ int main(){
     g_apdsProx=0; instructionList.clear(); obstacles.Clear(); isEvading=false; state=STOP; step(4); }
   g_in.push_back("TARGET_COLOR|azul"); step(2);
   CHECK(!strcmp(bdieTargetColor,"azul"), "TARGET_COLOR cambia el color en vivo");
-  // 17-oct: vigilante de movimiento — un TURN con las ruedas trabadas (los stubs no
-  // cuentan pulsos) tiene que cortarse solo y avisar a la base.
+  // Vigilante de movimiento: un TURN con las ruedas trabadas (los stubs no
+    // cuentan pulsos) debe cortarse solo y avisar a la base.
   instructionList.clear(); fsmInstruction[0]=TURN; fsmInstruction[1]=DegToArc(90);
   instructionList.push_back(fsmInstruction); state=READ_INSTRUCTION; g_out.clear();
   step(2); bool girando = (state==TURN);
   for(int k=0;k<3000 && state==TURN;k++) step(1);      // hasta 15 s simulados
   CHECK(girando && state!=TURN && sent("WARNING: TURN sin terminar"), "TURN trabado se corta solo y avisa (vigilante)");
-  // 17-oct: bloqueo temporal de la meta sin progreso en BUSCAR
+  // Bloqueo temporal de la meta sin progreso en BUSCAR
   { bdie::Agent ag; bdie::GridConfig gc; ag.Init(3, gc); ag.bel.phase = bdie::PH_BUSCAR;
     ag.TempBlockCell(40, 1000);
     bool b1 = ag.map.Blocked(40); ag.TempBlockExpire(1000 + ag.tempBlockMs + 1);
     CHECK(b1 && !ag.map.Blocked(40), "bloqueo temporal de celda: se bloquea y se libera solo"); }
-  // 17-oct: barrido de 360° al llegar a una celda buscando
+  // Barrido al llegar a una celda buscando
   { bool mA2=missionActive; missionActive=true; bdieOwnsSearch=true; search.active=true;
     auto fA=agent.bel.phase; agent.bel.phase=bdie::PH_BUSCAR; instructionList.clear();
     BdieOnNavArrived(); StateDeliberate();
@@ -217,27 +218,27 @@ int main(){
     bdieScanEnabled=false; BdieOnNavArrived(); bool apagado=!bdieScanPending; bdieScanEnabled=true;
     CHECK(giro && apagado, "al llegar a una celda en BUSCAR barre +45° y -90° antes de deliberar (NAV_CONFIG|SCAN lo apaga)");
     agent.bel.phase=fA; missionActive=mA2; search.active=false; bdieOwnsSearch=false; instructionList.clear(); state=STOP; }
-  // 17-oct: el retroceso no se corta por el obstáculo de enfrente
+  // El retroceso no se corta por el obstáculo de enfrente
   { instructionList.clear(); fsmInstruction[0]=REVERSE; fsmInstruction[1]=-80; instructionList.push_back(fsmInstruction);
     state=READ_INSTRUCTION; isEvading=false; step(1);
     obstacles.centralObstacle=true; obstacles.obstacleSensors=0b010; step(3);
     CHECK(state==REVERSE, "el retroceso sigue aunque haya obstáculo adelante (no hay sensores atrás)");
     obstacles.Clear(); instructionList.clear(); state=STOP; step(2); }
-  // 17-oct: un candidato descartado no se vuelve a revisar en el mismo lugar
+  // Un candidato descartado no se vuelve a revisar en el mismo lugar
   { bool mA3=missionActive; missionActive=false; robotPose.x=900; robotPose.y=700; robotPose.angle=0;
     search.active=true; SearchEvadeAndResume(); instructionList.clear();
     obstacles.Clear(); obstacles.centralObstacle=true; obstacles.obstacleSensors=0b010; evasionStartTime=millis();
     search.active=true; StateActiveEvasion();
     CHECK(state!=SEARCH_APPROACH, "un candidato descartado hace poco en el mismo lugar no se vuelve a revisar");
     search.active=false; obstacles.Clear(); instructionList.clear(); state=STOP; missionActive=mA3; isEvading=false; step(2); }
-  // 17-oct: FIN al volver a la base (sin pares vivos) y borra la memoria
+  // FIN al volver a la base (sin otros robots vivos) y borrado de la memoria
   { bdie::Agent ag; bdie::GridConfig gc; ag.Init(5, gc);
     ag.StartMission(300, 300, 9, 1000); ag.bel.phase = bdie::PH_VOLVER; ag.bel.congregationClosed = true;
     ag.bel.targetKnown = true; ag.map.Deposit(30);
     ag.bel.x = 320; ag.bel.y = 310; ag.Cycle(2000);
     CHECK(ag.bel.phase == bdie::PH_FIN && !ag.bel.targetKnown && ag.map.CoverageCells() == 0,
           "al llegar a la base en VOLVER pasa a FIN y borra la memoria de la corrida"); }
-  // 24-oct: cada robot tiene su lugar en la base (corrida 17-oct 15:02, dos robots a la misma celda)
+  // Cada robot tiene su propio lugar en la base
   { bdie::GridConfig gc; float gxs[2], gys[2]; int ids[2]={2,3};
     for (int k=0;k<2;k++){ bdie::Agent ag; ag.Init(ids[k], gc); ag.StartMission(300,300,9,1000);
       ag.bel.phase=bdie::PH_VOLVER; ag.bel.x=900; ag.bel.y=700; ag.tClosed=0;
@@ -245,19 +246,19 @@ int main(){
     const float sep = std::hypot(gxs[0]-gxs[1], gys[0]-gys[1]);
     const float r0 = std::hypot(gxs[0]-300, gys[0]-300), r1 = std::hypot(gxs[1]-300, gys[1]-300);
     CHECK(sep > 150 && r0 < 200 && r1 < 200, "en el retorno cada robot va a su propio lugar alrededor de la base (dentro del radio de FIN)"); }
-  // 24-oct: fuera de sesión no se deposita; la celda propia sigue a la pose
+  // Fuera de sesión no se deposita feromona; la celda propia sigue a la pose
   { bdie::Agent ag; bdie::GridConfig gc; ag.Init(2, gc); ag.StartMission(300,300,9,1000); ag.AbortMission(2000);
     ag.OnPose(2, 520, 520, 0, 10); ag.OnPose(2, 820, 520, 0, 11);
     CHECK(ag.map.CoverageCells()==0 && ag.bel.myCell==bdie::MmToIndex(gc,820,520),
           "en SEGURO no se deposita feromona y la celda propia sigue a la pose"); }
-  // 24-oct (corrida 15:06): un robot apenas fuera de la cuadrícula no se queda sin meta
+  // Un robot apenas fuera de la cuadrícula no se queda sin meta
   { bdie::Agent ag; bdie::GridConfig gc; ag.Init(1, gc); ag.StartMission(300,300,9,1000);
     ag.bel.phase=bdie::PH_BUSCAR; ag.OnPose(1, -12, 90, 140, 12);
     bool celda = ag.bel.myCell == bdie::MmToIndexClamped(gc, -12, 90);
     bdie::Action a = ag.Cycle(5000); bool meta = false;
     for (int k=0;k<20 && !meta;k++){ a = ag.Cycle(5000 + 500*k); meta = (a.kind==bdie::Action::A_GOTO_CELL || ag.intention.goalCell>=0); }
     CHECK(celda && meta, "un robot 22 mm fuera de la cuadrícula toma la celda del borde y elige meta"); }
-  // 24-oct (corrida 13:52): en búsqueda, el obstáculo central se revisa aunque un robot diga «soy yo»
+  // En búsqueda, el obstáculo central se revisa aunque otro robot diga «soy yo»
   { bool mA7=missionActive; missionActive=false; search.active=true; searchRejectMs=0;
     obstacles.Clear(); obstacles.centralObstacle=true; obstacles.obstacleSensors=0b010;
     obstacles.robotDetected=true; obstacles.fromRobotID="2"; g_out.clear();
@@ -271,7 +272,7 @@ int main(){
     CHECK(state==WAIT, "con NAV_CONFIG|CAND_ROBOT|0 espera al robot como el laboratorio");
     searchCandAunqueRobot=true; search.Reset(); search.active=false; obstacles.Clear(); instructionList.clear();
     state=STOP; missionActive=mA7; isEvading=false; step(2); }
-  // 05-nov: negociación de paso entre robots (corridas 15:05 y 16:32 del 24-oct)
+  // Negociación de paso entre robots
   { CHECK(DecidirPaso(1,2,true)=='S' && DecidirPaso(2,1,true)=='C' && DecidirPaso(2,1,false)=='Q' &&
           DecidirPaso(1,2,false)=='Q', "regla de paso: quieto → QUIETO; en movimiento, el menor ID sigue y el mayor cede");
     // El que contesta: este robot es el 2. Pregunta el 1 desde 100 mm al frente, mirándolo.
@@ -314,7 +315,7 @@ int main(){
     { std::array<String,6> a={"NAV_CONFIG","PASO","1","","",""}; HandleNavConfig(a); }
     CHECK(apagado && pasoNegociado, "NAV_CONFIG|PASO|0/1 lo apaga y lo enciende en vivo");
     obstacles.Clear(); instructionList.clear(); state=STOP; missionActive=mA9; isEvading=false; step(2); }
-  // 05-nov: ping robot↔robot (latencia de OE3). Este robot es el 2.
+  // Medición de latencia entre robots. Este robot es el 2.
   { auto nav_cfg=[&](const char* n){ std::array<String,6> a={"NAV_CONFIG","LAT",n,"","",""}; HandleNavConfig(a); };
     g_out.clear(); LatTick(); bool apagado = !sent("LAT_PING");
     g_out.clear(); nav_cfg("1"); bool cfg = latPeriodoMs==1000 && sent("NAV_CONFIG: latencia=cada 1000 ms");
@@ -348,7 +349,7 @@ int main(){
     CHECK(latPeriodoMs==0 && !sent("LAT_PING") && sent("NAV_CONFIG: latencia=apagada"), "NAV_CONFIG|LAT|0 lo apaga");
     nav_cfg("50"); bool minimo = latPeriodoMs==200; nav_cfg("0");
     CHECK(minimo, "el período tiene un piso de 200 ms (no saturar el canal del enjambre)"); }
-  // 17-oct (corrida 15:02): tope de viaje en misión — no 3 min tras una celda de borde
+  // Tope de viaje en misión
   { bool mA4=missionActive; auto f4=agent.bel.phase; missionActive=true; agent.bel.phase=bdie::PH_BUSCAR;
     bdieOwnsMeet=false; robotPose.x=500; robotPose.y=500; nav.Start(500,1500);     // 1000 mm → 45 s
     BdieLoopHook(); g_out.clear(); g_ms += 30000; BdieLoopHook(); bool sigue = nav.isActive;
@@ -356,7 +357,7 @@ int main(){
     CHECK(sigue && !nav.isActive && sent("WARNING: viaje a (500,1500)"),
           "un viaje de exploración que no llega en 15 s + 30 ms/mm se suelta y avisa");
     agent.bel.phase=f4; missionActive=mA4; nav.Reset(); instructionList.clear(); state=STOP; step(2); }
-  // 24-oct: viaje cortado junto a la meta en BUSCAR → gira hacia la meta y la revisa como candidato
+  // Viaje cortado junto a la meta en BUSCAR: gira hacia la meta y la revisa como candidato
   { bool mA8=missionActive; auto f8=agent.bel.phase; bool fs8=frontSensorInitialized;
     missionActive=true; agent.bel.phase=bdie::PH_BUSCAR; bdieOwnsMeet=false; bdieOwnsSearch=true;
     search.active=true; frontSensorInitialized=true; instructionList.clear();
@@ -370,7 +371,7 @@ int main(){
     CHECK(search.steps==0 || search.steps==1, "el acercamiento pedido desde la cola arranca con contadores en cero");
     search.Reset(); search.active=false; bdieOwnsSearch=false; frontSensorInitialized=fs8;
     agent.bel.phase=f8; missionActive=mA8; nav.Reset(); instructionList.clear(); state=STOP; step(2); }
-  // 17-oct (corrida 15:02): el TGT que llega a mitad de un viaje suelta el cuerpo
+  // El TGT que llega a mitad de un viaje suelta el cuerpo
   { auto f5=agent.bel.phase; bool tk=agent.bel.targetKnown; int ow=agent.bel.targetOwner;
     agent.bel.phase=bdie::PH_BUSCAR; agent.bel.targetKnown=false; agent.bel.targetOwner=-1;
     robotPose.x=500; robotPose.y=500; nav.Start(560,50);
@@ -378,7 +379,7 @@ int main(){
     CHECK(agent.bel.phase==bdie::PH_CONGREGAR && !nav.isActive && state==STOP,
           "al enterarse del objetivo por mensaje deja el viaje de exploración y delibera");
     agent.bel.phase=f5; agent.bel.targetKnown=tk; agent.bel.targetOwner=ow; nav.Reset(); instructionList.clear(); step(2); }
-  // 17-oct (corrida 15:02): en VOLVER, ya junto a la base, suelta el viaje para poder cerrar
+  // En VOLVER, ya junto a la base, se suelta el viaje para poder cerrar
   { bool mA6=missionActive; auto f6=agent.bel.phase; bool se6=agent.bel.session;
     missionActive=true; agent.bel.phase=bdie::PH_VOLVER; agent.bel.session=true;
     agent.bel.baseX=260; agent.bel.baseY=350; robotPose.x=155; robotPose.y=405;

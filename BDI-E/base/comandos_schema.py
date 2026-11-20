@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
 """
-comandos_schema.py — firmas verificadas de los comandos, para validar y para
-exponerlas como herramientas a un agente.
+comandos_schema.py — firmas verificadas de los comandos, para validarlos y para
+exponerlos como herramientas a un agente.
 
-¿Por qué otro archivo si _ROBOT_CMDS ya es la fuente única?
---------------------------------------------------------------------------
-_ROBOT_CMDS mapea verbo → string de AYUDA ('x|y[|radio]'). Eso sirve para que
-un humano recuerde el orden de los argumentos, pero no es una gramática: hay
-entradas ambiguas ('L|C|R|0o1' son dos argumentos, no cuatro) y llegó a haber
-cuatro que NO coincidían con lo que el firmware lee. Un parser de esos strings
-adivinaría, y adivinar mal acá significa mandar un comando que el robot
-descarta EN SILENCIO — el modo de falla que ya costó tiempo de laboratorio.
+_ROBOT_CMDS mapea verbo → cadena de ayuda ('x|y[|radio]'). Eso sirve para que
+una persona recuerde el orden de los argumentos, pero no es una gramática: hay
+entradas ambiguas ('L|C|R|0o1' son dos argumentos, no cuatro), y un analizador
+que adivinara a partir de esas cadenas podría enviar un comando que el robot
+descarta sin aviso.
 
-Entonces las firmas de acá salen de leer los Handle*() de comandos.ino, no de
-los strings de ayuda. Para que las dos tablas no se separen con el tiempo,
-revisar_vocabulario() falla si alguien agrega un comando a _ROBOT_CMDS y se
-olvida de describirlo acá. Esa comprobación es la que mantiene la propiedad de
-fuente única; el string de ayuda sigue siendo para el humano.
+Por eso las firmas de este archivo salen de leer los Handle*() de comandos.ino,
+no de las cadenas de ayuda. Para que las dos tablas no se separen,
+revisar_vocabulario() falla si se agrega un comando a _ROBOT_CMDS sin
+describirlo aquí.
 
 Uso:
-    python Base/comandos_schema.py            # reporte de consistencia
-    python Base/comandos_schema.py --tools    # esquema JSON para el agente
+    python base/comandos_schema.py            # reporte de consistencia
+    python base/comandos_schema.py --tools    # esquema JSON para el agente
 
     from comandos_schema import validar
     ok, error = validar('1.MOVE|500')
@@ -70,7 +66,7 @@ def _e(n, ops, req=True, ayuda=''): return Arg(n, 'enum', req, tuple(ops), ayuda
 
 NAV_KEYS = ('SEGMENT_DIST', 'ARRIVAL_THRESHOLD', 'PARKING_DIST', 'WHEEL_DIST',
             'REALIGN', 'GOAL_DEADBAND', 'ARENA', 'YAW_SCALE',
-            'WAIT_TURN', 'WAIT_MOVE', 'SCAN', 'CAND_ROBOT', 'EVAP', 'PASO', 'LAT')   # WAIT_*: pausas de navegación (17-oct), robot/AttaBot y robot_prueba_esperas
+            'WAIT_TURN', 'WAIT_MOVE', 'SCAN', 'CAND_ROBOT', 'EVAP', 'PASO', 'LAT')   # WAIT_*: pausas de navegación; SCAN, CAND_ROBOT, EVAP, PASO y LAT: BDI-E
 
 COLORES = ('rojo', 'verde', 'azul')
 

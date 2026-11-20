@@ -1,27 +1,21 @@
 /*****************************************************************************
- * bdie_bridge.cpp — Puente C para el banco de pruebas
+ * bdie_bridge.cpp — Puente en C para el banco de simulación SITL
  *
- * 🔴 CRITERIO NO NEGOCIABLE DEL PROYECTO, y este archivo es lo que lo
- * materializa: el simulador NO reimplementa la lógica de decisión. Carga esta
- * biblioteca y ejecuta el MISMO C++ que se compila para el ESP32.
+ * El simulador no reimplementa la lógica de decisión: carga esta biblioteca y
+ * ejecuta el mismo C++ que se compila para el ESP32. Por eso grid.h,
+ * pheromone_map.h, assignment.h y bdi.h no tienen dependencias de Arduino. Así
+ * un defecto se corrige una sola vez y el banco no diverge del robot.
  *
- * Es la respuesta al defecto conocido del repositorio —que sim/attabot_sim.py
- * sea una reimplementación del firmware, con lo que las dos versiones divergen
- * y cada defecto hay que corregirlo dos veces—. Y es la razón por la que
- * grid.h, pheromone_map.h, assignment.h y bdi.h se escribieron sin
- * dependencias de Arduino.
+ * El banco es una herramienta de ingeniería: sirve para depurar y ajustar los
+ * parámetros fuera del laboratorio. La validación de la misión se hace sobre
+ * los robots físicos.
  *
- * El banco es MEDIO DE INGENIERÍA, NUNCA ENTREGABLE (R1 del cliente: «ya lo
- * tuvimos simulado; si no, sería una repetición de lo anterior»). No aparece en
- * ningún objetivo. Sirve para barrer los parámetros de la feromona sin ocupar
- * el laboratorio, que con menos de 4 h por semana es lo que lo justifica.
- *
- * La CONGREGACIÓN no está acá: es el MEET del laboratorio, y el banco lo
- * compila aparte, verbatim, en lab_cong.cpp (ver extraer_lab.py). Esta
+ * La congregación no está aquí: es el MEET del laboratorio, y el banco lo
+ * compila aparte, tal cual, en lab_cong.cpp (ver extraer_lab.py). Esta
  * biblioteca expone solo el lado del agente: pedir el MEET (acción 5),
  * enterarse de la llegada (bdie_slot_reached) y saber si quedó viejo.
  *
- * Compilar:  make sitl
+ * Compilar:  make -f Makefile.mk sitl
  *****************************************************************************/
 #include "../firmware/mission.h"
 #include "../firmware/telemetry.h"
@@ -39,23 +33,20 @@ struct COut {
     int   desire;
     int   zone;
     int   myCell;
-    int   coverage;    // celdas acumuladas — la MÉTRICA, no la feromona
+    int   coverage;    // celdas acumuladas: la métrica de cobertura, no la feromona
     int   targetOwner;
     int   congregationClosed;
     int   arrivedAtPlace;
     int   iFoundIt;
 };
 
-/* El nodo es el agente MÁS el modelo de su sensor.
- *
- * V2 (28-sep-2026): target_sensor.h ya no existe. En el robot, la detección la
- * hace el firmware del LABORATORIO —SEARCH_APPROACH + MatchColor() con balance
- * de blancos por robot— y entrega UN hallazgo por acercamiento, sin voto K-de-M.
- * El modelo de acá reproduce ese contrato: el banco dice si el objeto está al
- * alcance del sensor, y el flanco de subida es un hallazgo. Lo que el banco NO
- * modela es el tiempo del acercamiento lento (SEARCH_CREEP_PWM, ≤ 6 s): queda
- * como diferencia declarada entre banco y robot. Las firmas de las funciones
- * no cambian, así que bdie_sim.py y el protocolo del indicador tampoco. */
+/* Cada nodo es el agente más el modelo de su sensor. En el robot, la
+ * detección la hace el firmware del laboratorio (SEARCH_APPROACH + MatchColor()
+ * con balance de blancos por robot) y entrega un hallazgo por acercamiento. El
+ * modelo reproduce ese contrato: el banco dice si el objeto está al alcance del
+ * sensor, y el flanco de subida es un hallazgo. El banco no modela el tiempo
+ * del acercamiento al candidato, que es una diferencia conocida entre banco y
+ * robot. */
 struct LabColorSearchModel {
     bool active = true, prev = false;
     bool Edge(bool raw) { const bool e = active && raw && !prev; prev = raw; return e; }
@@ -105,22 +96,22 @@ void bdie_params(void* h, float alpha, float beta, int rho, int deposit,
     a->missionTimeoutMs = missionMs;
 }
 
-/* Período de evaporación de la feromona, para poder ablacionarlo con las mismas
- * semillas. Es LA palanca del ritmo: rho no lo es en este rango (ver la nota de
+/* Período de evaporación de la feromona, para compararlo con las mismas
+ * semillas. Es lo que fija el ritmo de evaporación (ver la nota de
  * cuantización en pheromone_map.h). */
 void bdie_evaporacion(void* h, unsigned periodoMs) {
     if (periodoMs > 0) A(h)->evaporatePeriodMs = periodoMs;
 }
 
-/* Bono de novedad y plan de frontera (12-oct-2026), para ablacionarlos con las
- * mismas semillas: novedad = 1 y frontera = 0 reproducen la exploración anterior. */
+/* Bono de novedad y búsqueda de frontera, para compararlos con las mismas
+ * semillas: novedad = 1 y frontera = 0 desactivan ambos. */
 void bdie_exploracion(void* h, float novedad, int frontera) {
     A(h)->map.novelty      = novedad;
     A(h)->frontierEnabled  = (frontera != 0);
 }
 
-/* Modo de formación en el retorno y ancho de la banda. Es el parámetro que el
- * banco barrió para encontrar que el modo 0 no acota el radio del enjambre. */
+/* Modo de formación en el retorno y ancho de la banda (ver formationMode en
+ * bdi.h). */
 void bdie_formation(void* h, int mode, float bandMm, unsigned waitMs, unsigned graceMs) {
     Agent* a = A(h);
     a->formationMode   = mode;
@@ -129,9 +120,9 @@ void bdie_formation(void* h, int mode, float bandMm, unsigned waitMs, unsigned g
     a->returnGraceMs   = graceMs;
 }
 
-/* Una sola puerta de entrada: el banco alimenta al agente con EXACTAMENTE las
- * mismas cadenas que viajan por UDP en el robot. Un defecto de interpretación
- * del protocolo no puede existir en uno y no en el otro. */
+/* Una sola puerta de entrada: el banco alimenta al agente con exactamente las
+ * mismas cadenas que viajan por UDP en el robot, así que la interpretación del
+ * protocolo es idéntica en ambos. */
 void bdie_feed(void* h, const char* line, unsigned nowMs) { Feed(*A(h), line, nowMs); }
 
 void bdie_target_seen(void* h, unsigned nowMs) { A(h)->OnTargetSeen(nowMs); }
@@ -173,9 +164,9 @@ int bdie_pop_wire(void* h, char* dst, int cap) {
     return n;
 }
 
-/* Telemetría: el MISMO codificador que usa el robot (telemetry.h). El banco
- * puede así alimentar a la base y a su GUI con los mensajes exactos que
- * mandaría el enjambre físico. Devuelven la longitud, o -1 si no cabe. */
+/* Telemetría con el mismo codificador que usa el robot (telemetry.h): el
+ * banco puede alimentar a la base y a su GUI con los mensajes exactos que
+ * enviaría el enjambre físico. Devuelven la longitud, o -1 si no cabe. */
 int bdie_telem_think(void* h, unsigned nowMs, char* dst, int cap) {
     return EncodeThink(*A(h), nowMs, dst, cap);
 }
@@ -203,14 +194,12 @@ void  bdie_zone_mask(void* h, unsigned char* dst, int n) {
     std::memcpy(dst, m, (size_t)k);
 }
 
-/* ── Accesores del roster ────────────────────────────────────────────────────
+/* ── Accesores del registro de poses ──────────────────────────────────────
  *
- * Existen para la verificación de integración base ↔ firmware: el banco genera
- * los paquetes con `base/swarm_broadcast.py` —el MISMO código que va a correr
- * en la PC del laboratorio— y comprueba acá que el decodificador del firmware
- * los interpreta como corresponde. Sin estos accesores habría que creerle al
- * `Feed()` sin mirar, que es justamente la clase de cosa que este proyecto no
- * hace. */
+ * Sirven para verificar la integración base ↔ firmware: el banco genera los
+ * paquetes con base/swarm_broadcast.py, el mismo código que corre en la PC del
+ * laboratorio, y comprueba aquí que el decodificador del firmware los
+ * interpreta bien. */
 int bdie_roster_n(void* h)      { return A(h)->roster.n; }
 unsigned bdie_epoch(void* h)    { return (unsigned)A(h)->roster.epoch; }
 int bdie_alive_count(void* h)   { return A(h)->roster.AliveCount(); }
@@ -231,22 +220,21 @@ int bdie_base(void* h, float* x, float* y) {
     return a->bel.session ? 1 : 0;
 }
 
-/* ── El reparto por mensajes (14-oct-2026) ──────────────────────────────────
+/* ── Reparto por mensajes ─────────────────────────────────────────────────
  *
- * bdie_comunicar es BdieLoopHook §2: el latido y el reparto corren por reloj
- * propio en CADA loop() del robot, no solo cuando el agente delibera. El banco
- * lo llama en cada paso para cada robot vivo; sin esto, mientras el cuerpo
- * navega el agente no latiría ni reclamaría, y el banco sería más pesimista que
- * el robot. */
+ * bdie_comunicar equivale al punto 2 de BdieLoopHook (bdie.ino): en el robot,
+ * el latido y el reparto corren con reloj propio en cada loop(), no solo cuando
+ * el agente delibera. El banco lo llama en cada paso para cada robot vivo; sin
+ * esto, mientras el cuerpo navega el agente no latiría ni reclamaría. */
 void bdie_comunicar(void* h, unsigned nowMs) { A(h)->Comunicar(nowMs); }
 
-/* VIVO = LO OIGO: el conjunto que este agente oye (bit i = robot i). */
+/* Vivo = se le oye: el conjunto que este agente oye (bit i = robot i). */
 unsigned bdie_talking_mask(void* h, unsigned nowMs) {
     return (unsigned)A(h)->TalkingMask(nowMs);
 }
 
 /* Estado de la ronda y contadores, para las métricas del banco. Devuelve la
- * franja VIGENTE del agente (-1 si todavía no tiene). */
+ * franja vigente del agente (-1 si todavía no tiene). */
 int bdie_rep_info(void* h, unsigned* rep, unsigned* mask, int* adopted,
                   unsigned* rounds, unsigned* sent, unsigned* agreements,
                   unsigned* fallbacks, unsigned* assignEpoch, unsigned* assignMask) {
@@ -263,15 +251,15 @@ int bdie_rep_info(void* h, unsigned* rep, unsigned* mask, int* adopted,
     return a->bel.myZone;
 }
 
-/* La franja que ESTE agente cree que tiene el robot `id` en el reparto vigente. */
+/* Franja que este agente cree que tiene el robot `id` en el reparto vigente. */
 int bdie_zone_of(void* h, int id) {
     Agent* a = A(h);
     if (!a->assign.valid || id < 0 || id >= MAX_ROBOTS) return -1;
     return a->assign.zoneOf[id];
 }
 
-/* Parámetros del reparto y de la vivacidad, para barrerlos con las mismas
- * semillas. 0 = no cambiar. */
+/* Parámetros del reparto y de la detección de vivos, para compararlos con las
+ * mismas semillas. 0 = no cambiar. */
 void bdie_reparto_params(void* h, unsigned settleMs, unsigned resendMs, unsigned keepMs,
                          unsigned graceMs, unsigned fallbackMs, unsigned peerDeadMs) {
     Agent* a = A(h);

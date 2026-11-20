@@ -1,16 +1,16 @@
-"""Barra de misión de la GUI (12-oct-2026).
+"""Barra de misión de la GUI.
 
-Lo que antes había que deducir leyendo el log, a la vista y en una sola franja:
+Muestra en una sola franja:
 
-  - qué color busca el enjambre, y qué robots CONFIRMARON ese color
-    (cada robot contesta 'TARGET_COLOR: <color>' al recibirlo);
-  - si hay una sesión en curso, cuánto lleva contra el tope de 20 min;
+  - qué color busca el enjambre y qué robots confirmaron ese color (cada
+    robot contesta 'TARGET_COLOR: <color>' al recibirlo);
+  - si hay una sesión en curso, cuánto lleva respecto del tope de 20 min;
   - la fase de cada robot, su zona y si ya conoce el objetivo;
-  - la cobertura acumulada y quién encontró el objetivo, dónde.
+  - la cobertura acumulada y quién encontró el objetivo, y dónde.
 
-El botón «Iniciar misión» manda el color ANTES del SESSION|START, en la misma
+El botón «Iniciar misión» envía el color antes del SESSION|START, en la misma
 orden (BASE.SESSION|START|x|y|color). El color no se guarda en el robot: si uno
-se reinicia vuelve a rojo, así que mandarlo en cada inicio es lo único seguro.
+se reinicia vuelve a rojo, así que enviarlo en cada inicio es lo seguro.
 """
 import re
 import time
@@ -88,7 +88,7 @@ class MisionBar(QFrame):
         titulo.setFont(QFont('', 11, QFont.Bold))
         f1.addWidget(titulo)
         self._chipEstado = _Chip('SIN SESIÓN', '#34373d', '#e6e6e6')
-        self._chipEstado.setMinimumWidth(120)   # 24-oct: que la fila no se mueva al cambiar el texto
+        self._chipEstado.setMinimumWidth(120)   # que la fila no se mueva al cambiar el texto
         f1.addWidget(self._chipEstado)
         self._reloj = QLabel('—')
         self._reloj.setFont(QFont('Monospace', 12, QFont.Bold))
@@ -125,11 +125,10 @@ class MisionBar(QFrame):
         f1.addWidget(self._obj)
         self._btnIniciar = QPushButton('▶  Iniciar misión')
         self._btnIniciar.setObjectName('primario')
-        # 24-oct: con «clicked» hacía falta un segundo clic después de escribir
-        # en «Objeto»: el primer clic saca el foco del campo y el refresco de
-        # 500 ms reacomoda la fila entre el press y el release, así que el
-        # release cae fuera y Qt no emite clicked. «pressed» dispara al bajar el
-        # botón; el antirrebote evita dos START seguidos.
+        # Se usa «pressed» y no «clicked»: al escribir en «Objeto», el primer clic
+                # saca el foco del campo y el refresco de 500 ms reacomoda la fila entre
+                # el press y el release, así que «clicked» no se emitiría. El antirrebote
+                # evita dos START seguidos.
         self._tUltimoInicio = 0.0
         self._btnIniciar.pressed.connect(self._iniciarPresionado)
         f1.addWidget(self._btnIniciar)
@@ -222,8 +221,8 @@ class MisionBar(QFrame):
         nombres = {getattr(r, 'name', str(rid)): rid for rid, r in robots.items()}
         c = self._colorSesion
         if c:
-            # Solo cuentan los robots registrados; un robot encendido y sin
-            # registrar también contesta (17-oct: salía «4/3 confirmaron»).
+            # Solo cuentan los robots registrados: un robot encendido y sin
+                        # registrar también contesta.
             ok = sum(1 for n, v in self._acks.items() if v == c and n in nombres)
             mal = [n for n, v in self._acks.items() if v != c and n in nombres]
             extra = [n for n in self._acks if n not in nombres]
@@ -288,7 +287,7 @@ class MisionBar(QFrame):
         except Exception:
             pass
         self._cob.setText(f'Cobertura {cobMax}/{n} ({100 * cobMax / n:.0f} %)' if think else 'Cobertura —')
-        # 17-oct: todos los robots en FIN = volvieron a la base, misión cumplida
+        # todos los robots en FIN: volvieron a la base, misión cumplida
         if think and self._estado in ('EN CURSO', 'HALLADO') and \
                 all(str(t.get('fase', '')) == 'FIN' for t in think.values()):
             self._estado = 'COMPLETADA'

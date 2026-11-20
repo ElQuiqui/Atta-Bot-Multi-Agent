@@ -1,46 +1,36 @@
 """
-swarm_broadcast.py — La base como servicio de localización, nada más
-=====================================================================
+swarm_broadcast.py — la base como servicio de localización
+===========================================================
 
-ORIGEN: adaptado de `Desktop/Atta-Bot/Base/swarm_broadcast.py` (prototipo del
-5-sep-2026). El protocolo coincide byte a byte con `firmware/mission.h` §1, así
-que no hubo que tocar el formato de un solo mensaje. Lo que sí cambió son dos
-cosas de fondo, marcadas abajo con 🔴, y la tabla de fases del observador.
-
-En la arquitectura BDI-E la PC deja de decidir. Sus dos únicas responsabilidades:
+En la arquitectura BDI-E la PC no decide. Tiene dos responsabilidades:
 
   1. Difundir por broadcast las poses que ve con ArUco (~10 Hz).
   2. Dar la señal de inicio (y de aborto) de la sesión.
 
-Toda la deliberación —a dónde explorar, cuándo anunciar, quién ocupa qué lugar,
-cuándo volver— ocurre en los ESP32. La base es reemplazable: cualquier fuente de
-poses (UWB, captura de movimiento, otra cámara) sirve sin tocar el firmware.
+Toda la deliberación (dónde explorar, cuándo anunciar, quién ocupa qué lugar,
+cuándo volver) ocurre en los ESP32. La base es reemplazable: cualquier fuente de
+poses (UWB, captura de movimiento, otra cámara) sirve sin tocar el firmware. El
+formato de los mensajes coincide byte a byte con firmware/mission.h §1.
 
-INTEGRACIÓN EN AttaBot_Base.py — tres cambios, todos aditivos
--------------------------------------------------------------
+Un solo paquete de poses por cuadro, en vez de un unicast por robot, le dice a
+cada robot dónde están todos los demás, que es lo que permite coordinarse sin
+negociar.
+
+Integración en AttaBot_Base.py (los tres puntos están marcados «BDI-E»):
+
 1) En Base.__init__, después de configurar el socket:
 
        from swarm_broadcast import SwarmBroadcaster
        self.swarm = SwarmBroadcaster(self.sock, self.broadcastIP, self.port,
                                      log=self.log)
 
-2) En sendPositions(), reemplazar el envío unicast por el broadcast único.
-   Lo que hay hoy, dentro del for:
-
-       instruction = f'POSE|{x}|{y}|{angle}'
-       self.sendInstruction(robot.IP, [instruction], False)
-
-   pasa a acumularse y enviarse una sola vez al final del método:
+2) Al enviar las poses, se acumulan y se difunden una sola vez por cuadro:
 
        poses[robot.id] = (x, y, angle)
        ...
        self.swarm.broadcast_poses(poses)
 
-   Ventaja lateral nada menor: hoy son N paquetes unicast por cuadro; pasa a ser
-   1 solo paquete, y además cada robot se entera de dónde están TODOS los demás,
-   que es exactamente lo que habilita la coordinación sin negociación.
-
-3) En inputInstruction(), agregar los comandos de sesión:
+3) Los comandos de sesión:
 
        elif robotId == 'SESSION':
            if instruction.upper().startswith('START'):
@@ -48,8 +38,8 @@ INTEGRACIÓN EN AttaBot_Base.py — tres cambios, todos aditivos
            elif instruction.upper().startswith('ABORT'):
                self.swarm.abort_session()
 
-Nada más cambia. ArUco, calibración, logs y video quedan intactos, y
-`POSE|x|y|angle` se puede seguir enviando en paralelo durante la transición.
+ArUco, calibración, registros y video quedan intactos, y POSE|x|y|angle se
+puede seguir enviando en paralelo.
 """
 
 import time
@@ -105,18 +95,13 @@ class SwarmBroadcaster:
             return False
         self._last_sent = now
 
-        # 🔴 CAMBIO 1 — EL EPOCH AVANZA EN CADA PAQUETE, no una vez por sesión.
-        #
-        # En el prototipo el epoch solo se incrementaba en start_session(), así
-        # que durante toda la corrida valía lo mismo. Eso rompe la detección de
-        # caídas de BDI-E: `Roster::Alive()` (assignment.h) declara muerto a un
-        # par cuando `epoch - p.epoch > staleEpochs`, y ese contador es EL DEL
-        # BROADCAST, no el reloj local, precisamente para que los cinco robots
-        # den la baja en el MISMO paquete. Con un epoch congelado la resta da
-        # siempre cero y NADIE se declara caído nunca: el experimento de fallo
-        # inducido de OE4 no funcionaría.
-        #
-        # Con 30 epochs de tolerancia y ~10 Hz de cámara, 3 s de ausencia.
+        # La época avanza en cada paquete. Roster::Alive() (assignment.h) declara
+                # caído a un robot cuando epoch - p.epoch > staleEpochs, y ese contador es
+                # el de la difusión, no el reloj local, para que todos los robots den la
+                # baja con el mismo paquete. Con una época fija la resta daría siempre
+                # cero y nadie se declararía caído.
+                #
+                # Con 30 épocas de tolerancia y ~10 Hz de cámara, 3 s de ausencia.
         self.epoch += 1
 
         packet = self.build_poses_packet(self.epoch, visible)
@@ -148,15 +133,9 @@ class SwarmBroadcaster:
         Se repite porque UDP no garantiza entrega y un robot que se pierda el
         inicio se queda en IDLE toda la corrida.
         """
-        # 🔴 CAMBIO 2 — el epoch de poses se REINICIA al abrir sesión y no da
-        # la vuelta dentro de ella.
-        #
-        # El prototipo lo llevaba módulo 65535. Un contador que da la vuelta
-        # rompe la resta sin signo del firmware: al pasar de 65534 a 0, todos
-        # los pares parecen venir «del futuro», la resta desborda y el enjambre
-        # entero se declara caído. A 10 Hz eso ocurre a las 1,8 h de operación
-        # continua — más que una misión de 20 min, pero no más que una tarde de
-        # laboratorio con la base encendida.
+        # La época se reinicia al abrir la sesión y no da la vuelta dentro de
+                # ella: un contador que diera la vuelta rompería la resta sin signo del
+                # firmware y todo el enjambre se declararía caído.
         self.epoch = 0
         self.session += 1
         msg = self.session_start_packet(homeX, homeY)
@@ -179,26 +158,24 @@ class SwarmBroadcaster:
         self._log("[Sesión] Aborto difundido.")
 
 
-# ── Observador pasivo para el informe ─────────────────────────────────────
+# ── Observador pasivo ─────────────────────────────────────────────────────
 class MissionObserver:
     """
-    Registra la misión SIN participar en ella. Escucha los latidos (HB) y los
-    anuncios (TGT) que los robots se difunden entre sí y calcula las métricas
-    del informe. Es deliberadamente pasivo: si se apaga, la misión sigue igual.
-    Ésa es la prueba operativa de que la base no decide nada.
+        Registra la misión sin participar en ella. Escucha los latidos (HB) y los
+        anuncios (TGT) que los robots se difunden entre sí y calcula métricas. Es
+        pasivo a propósito: si se apaga, la misión sigue igual, lo que muestra que
+        la base no decide nada.
 
-    Se engancha en readUdpConnection() de AttaBot_Base.py agregando al final de
-    la cadena de comandos:
+        Se engancha en readUdpConnection() de AttaBot_Base.py:
 
-        elif command == 'HB':
-            self.observer.on_heartbeat(parts, timeLog)
-        elif command == 'TGT':
-            self.observer.on_target(parts, timeLog)
-    """
+            elif command == 'HB':
+                self.observer.on_heartbeat(parts, timeLog)
+            elif command == 'TGT':
+                self.observer.on_target(parts, timeLog)
+        """
 
-    # 🔴 Las fases son las de bdi.h (siete), NO las nueve del prototipo. Si esta
-    # tabla se desalinea del enum del firmware, el log del informe queda mal
-    # etiquetado y nadie lo nota hasta analizar los datos.
+    # Las fases son las de bdi.h (siete). Si esta tabla se desalinea del enum del
+        # firmware, el registro queda mal etiquetado sin que nadie lo note.
     PHASES = ["IDLE", "DESPLEGAR", "BUSCAR", "CONGREGAR", "VOLVER", "FIN", "SEGURO"]
 
     def __init__(self, log=None):

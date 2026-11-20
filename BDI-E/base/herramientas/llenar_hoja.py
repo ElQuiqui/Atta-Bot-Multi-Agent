@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Llena la hoja de corrida de la campaña a partir de los logs de la base (07-nov-2026).
+"""Llena la hoja de corrida de una campaña a partir de los registros de la base.
 
-El operador solo corre las misiones EN EL ORDEN DE LA LISTA. Este script:
-  · asigna a cada fila nominal pendiente, en orden, el siguiente `BDIE_…_think.csv`
-    creado DESPUÉS de congelar el firmware (las corridas de verificación no entran);
+El operador corre las misiones en el orden de la lista. Este script:
+  · asigna a cada fila nominal pendiente, en orden, el siguiente
+    `BDIE_…_think.csv` creado después de congelar el firmware (las corridas de
+    verificación no entran);
   · descarta las sesiones de menos de 60 s sin detección (reinicios) y las lista;
-  · llena hora de inicio, posición del cubo según la cámara (si nadie la midió),
-    desenlace (el mismo de analisis_corrida.py), acercamientos < 1 diámetro entre
-    robots, tiempo de montaje y robots que participaron;
-  · detecta INTERVENCIONES por software (cualquier comando manual a un robot durante
-    la misión) y las anota; marca para REVISAR lo que podría ser una intervención
-    física (un robot que «salta» > 300 mm en < 1 s) o una corrida inválida
-    (la cámara sin poses de ningún robot > 5 s);
-  · en la línea base, asigna en orden los episodios `SEARCH_OBJECT` de las consolas.
+  · llena la hora de inicio, la posición del objetivo según la cámara (si no se
+    midió), el desenlace (el mismo de analisis_corrida.py), los acercamientos a
+    menos de 150 mm entre robots, el tiempo de montaje y los robots que
+    participaron;
+  · detecta intervenciones por software (cualquier comando manual a un robot
+    durante la misión) y las anota; marca para revisar lo que podría ser una
+    intervención física (un robot que «salta» más de 300 mm en menos de 1 s) o
+    una corrida inválida (la cámara sin poses de ningún robot durante más de 5 s);
+  · en la línea base, asigna en orden los episodios `SEARCH_OBJECT` de las
+    consolas.
 
-NO decide la validez: `valida_s_n` lo pone el operador (o queda «s» por omisión en
-el resumen) según las causas fijadas antes de la campaña. NO pisa celdas que ya
-tienen algo. Lo automático va en `notas` con el prefijo [auto].
+No decide la validez: `valida_s_n` lo pone el operador (o queda «s» por omisión
+en el resumen) según las causas fijadas antes de la campaña. No sobrescribe
+celdas que ya tienen algo; lo automático va en `notas` con el prefijo [auto].
 
-Uso (desde `Codigo/BDI-E V2/base`, con el Excel de la hoja CERRADO):
+Uso (desde BDI-E/base, con la hoja cerrada en Excel):
     python herramientas/llenar_hoja.py              # llena y muestra qué hizo
     python herramientas/llenar_hoja.py --resumen    # además corre resumen_campana.py
     python herramientas/llenar_hoja.py --seco       # muestra sin escribir
@@ -133,7 +136,7 @@ def revisar_poses(think, t0, t_end):
         for p, q in zip(v, v[1:]):
             if q[0] - p[0] < SALTO_S and math.hypot(q[1] - p[1], q[2] - p[2]) > SALTO_MM:
                 saltos.append((i, round(q[0] - t0)))
-    # acercamientos < 1 diámetro (episodios), muestreo 0,5 s con la última pose
+    # acercamientos a menos de 150 mm (episodios), muestreo de 0,5 s con la última pose
     ult, idx, prev = {}, {i: 0 for i in P}, False
     t = t0
     while t <= t_end:
@@ -242,8 +245,8 @@ def main():
                 auto.append('cubo según la cámara')
             else:
                 auto.append('REVISAR: sin posición del cubo (ni cámara ni medida)')
-        # 07-nov 14:31: el operador coloca el cubo en cada corrida; la cámara lo registra. Regla de
-        # colocación: ≥ 700 mm de la base y ≥ 200 mm de las paredes del área (1910 × 1400).
+        # El operador coloca el objetivo en cada corrida y la cámara lo registra. Regla de
+                # colocación: a ≥ 700 mm de la base y ≥ 200 mm de las paredes del área (1910 × 1400).
         ox, oy = fnum(f.get('obj_x_medida')), fnum(f.get('obj_y_medida'))
         bx, by = fnum(f.get('base_x')) or 300.0, fnum(f.get('base_y')) or 300.0
         if ox is not None and oy is not None:
@@ -261,8 +264,8 @@ def main():
         faltan = [i for i in esperados if i not in S['ids']]
         if faltan:
             auto.append('REVISAR: no participó Atta_' + ', Atta_'.join(faltan))
-        # Criterio del 07-nov 15:26: un robot que se apaga o queda inmovilizado es «baja» (lo confirma
-        # el operador en la columna `bajas`). Acá solo se SUGIERE.
+        # Un robot que se apaga o queda inmovilizado es una «baja» (lo confirma el
+                # operador en la columna `bajas`); aquí solo se sugiere.
         if not (f.get('bajas') or '').strip():
             filas_th = list(csv.DictReader(open(th, encoding='utf-8', errors='replace')))
             for i in esperados:
@@ -327,7 +330,7 @@ def main():
                 f['archivo_consola'] = os.path.basename(con)
                 asignadas.append((f, con, None))
 
-    # ── informe ──
+    # ── reporte ──
     for f, th, S in asignadas:
         print(f"  orden {f['orden']:>2} ({f['bloque']}) ← {os.path.basename(th)}"
               + (f"   {f.get('desenlace_script', '')}" if S else ''))

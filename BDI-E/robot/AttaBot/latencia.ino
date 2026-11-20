@@ -1,17 +1,18 @@
 /*****************************************************************************
- * latencia.ino — Latencia ENTRE ROBOTS para OE3 (05-nov-2026)
+ * latencia.ino — Medición de latencia entre robots
  *
- *   A  ── LAT_PING|seq|t_us|idA ──▶ broadcast (el canal de HB/TGT/ZC/ZA)
+ *   A  ── LAT_PING|seq|t_us|idA ──▶ difusión (el canal de HB/TGT/ZC/ZA)
  *   B  ── LAT_PONG|seq|t_us|idB ──▶ A, directo (eco del t_us de A)
  *   A  ── LAT|idB|rtt_ms|enviados|recibidos ──▶ base (ConsoleLog)
  *
- * rtt = micros() de A al recibir el pong − t_us que A mismo puso en el ping:
- * un solo reloj, sin sincronizar nada. Es cota superior del tramo de difusión.
- * El resumen lo saca herramientas/analisis_corrida.py (--lat para solo esto).
+ * rtt = micros() de A al recibir el pong − t_us que A puso en el ping: un solo
+ * reloj, sin sincronización. Es una cota superior de la latencia de un tramo
+ * de la difusión. El resumen lo calcula base/herramientas/analisis_corrida.py
+ * (--lat).
  *
- * Contesta siempre que tenga ID y no esté en BDIE_SILENCIO, aunque su propio
- * ping esté apagado: con un solo robot midiendo ya se mide contra todos.
- * Máximo 5 campos por mensaje (restricción del parser): LAT tiene 5.
+ * Cada robot contesta siempre que tenga ID y no esté en BDIE_SILENCIO, aunque
+ * su propio ping esté apagado: con un solo robot midiendo se mide contra todos.
+ * Los mensajes respetan la cota de cinco campos del analizador de comandos.
  *****************************************************************************/
 
 static const uint32_t LAT_PERIODO_OMISION_MS = 1000;
@@ -53,10 +54,10 @@ void LatTick() {
   SendMessage(robots["Broadcast"], buf);
 }
 
-// LAT_PING|seq|t_us|idA — devolverlo a quien lo mandó, con mi ID.
+// LAT_PING|seq|t_us|idA — devolverlo a quien lo envió, con el ID propio.
 void HandleLatPing(const std::array<String, 6> &arguments) {
   if (robotID == "-1" || BdieEnSilencio()) return;
-  if (arguments[3] == robotID) return;                  // eco de mi propio broadcast
+  if (arguments[3] == robotID) return;                  // eco de la propia difusión
   char buf[64];
   snprintf(buf, sizeof(buf), "LAT_PONG|%s|%s|%s", arguments[1].c_str(),
            arguments[2].c_str(), robotID.c_str());

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-verificar_bdie.py — el reporte de una sesión BDI-E, a partir de sus logs
+verificar_bdie.py — reporte de una sesión BDI-E a partir de sus registros
 
     python3 herramientas/verificar_bdie.py                 # la última sesión de BdieLogs/
-    python3 herramientas/verificar_bdie.py BdieLogs/BDIE_28-09_15-02-11_
-    python3 herramientas/verificar_bdie.py ... --caida 2   # se apagó R2 a propósito
+    python3 herramientas/verificar_bdie.py BdieLogs/BDIE_<fecha>_
+    python3 herramientas/verificar_bdie.py ... --caida 2   # se apagó el robot 2 a propósito
 
-Reproduce la sesión por el MISMO BdieMonitor que corrió en vivo (mismas
+Reproduce la sesión con el mismo BdieMonitor que corrió en vivo (mismas
 verificaciones, bdie_checks.py) y agrega lo que solo se puede decir al final:
 qué fases alcanzó cada robot y cuándo, cuánto tardó en propagarse el hallazgo,
-quién congregó y quién volvió, y si la misión cumple el criterio del cliente.
+quién se congregó, quién volvió y si la misión fue exitosa.
 
-Escribe <prefijo>reporte.md al lado de los logs y devuelve 0 si PASA, 1 si no.
+Escribe <prefijo>reporte.md junto a los registros y devuelve 0 si pasa y 1 si no.
 """
 import csv
 import glob
@@ -175,8 +175,8 @@ def verificar(prefijo, caidos=(), salida=True):
     if not poses:
         L.append("\n⚠ Sin poses de cámara en el log: congregación y retorno no se pueden medir.")
 
-    # Consistencia eventual de la feromona (P2): no hay un umbral acordado; se
-    # reporta para el Cap. 5 y para comparar sesiones.
+    # Consistencia de la feromona entre réplicas: no tiene umbral; se reporta para
+        # comparar sesiones.
     if difs:
         difs.sort()
         L.append(f"\nFeromona repelente, diferencia media entre réplicas: mediana "

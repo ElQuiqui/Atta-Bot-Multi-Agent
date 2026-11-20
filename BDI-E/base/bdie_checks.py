@@ -1,15 +1,14 @@
 """
-bdie_checks.py — las verificaciones de comportamiento de BDI-E, en UN solo lugar
+bdie_checks.py — verificaciones de comportamiento de BDI-E, en un solo lugar
 
-Las usa el monitor en vivo (bdie_monitor.py, alertas en la GUI mientras corre la
+Las usan el monitor en vivo (bdie_monitor.py, alertas en la GUI durante la
 prueba) y el verificador fuera de línea (herramientas/verificar_bdie.py, sobre
-los logs de una sesión). Es la misma regla en los dos lados a propósito: una
-alerta que se ve en la GUI y no aparece en el reporte, o al revés, es la clase
-de discrepancia que después no se puede explicar en el informe.
+los registros de una sesión). Es la misma regla en los dos lados, para que una
+alerta vista en la GUI aparezca también en el reporte y viceversa.
 
 Cada verificación es una función pura que devuelve una lista de hallazgos
-(tuplas (código, texto)). Una lista vacía es que pasa. Los códigos son los de
-PRUEBAS_observacion.md.
+(tuplas (código, texto)); una lista vacía significa que pasa. Los códigos
+V1–V10 identifican cada verificación.
 """
 
 FASES = ["IDLE", "DESPLEGAR", "BUSCAR", "CONGREGAR", "VOLVER", "FIN", "SEGURO"]
@@ -36,7 +35,7 @@ def transicion_legal(antes, despues):
 
 
 def particion(mapa):
-    """V2 · las zonas de UNA réplica: disjuntas y cubriendo toda la cuadrícula."""
+    """V2 · las zonas de una réplica: disjuntas y cubriendo toda la cuadrícula."""
     out = []
     filas, cols = mapa["filas"], mapa["cols"]
     if not mapa["zonas"]:
@@ -58,15 +57,15 @@ def particion(mapa):
 
 
 def acuerdo_zonas(mapas):
-    """V1 · todos los robots tienen el MISMO reparto vigente.
+    """V1 · todos los robots tienen el mismo reparto vigente.
 
-    Desde el 14-oct-2026 el reparto se ACUERDA por mensajes (ZC/ZA): cada BMAP
-    trae el reparto que ese robot dio por acordado. Mientras una ronda se
-    cierra hay una ventana de desacuerdo esperada (el monitor la tolera exigiendo
-    que el desacuerdo persista); un desacuerdo que dura es un defecto.
+        El reparto se acuerda por mensajes (ZC/ZA), y cada BMAP trae el reparto que
+        ese robot dio por acordado. Mientras una ronda se cierra hay una ventana de
+        desacuerdo esperada (el monitor la tolera exigiendo que el desacuerdo
+        persista); un desacuerdo que dura es un defecto.
 
-    mapas: {id: mapa decodificado}, todos recientes. Compara la asignación de
-    cada robot contra la del de menor ID."""
+        mapas: {id: mapa decodificado}, todos recientes. Compara la asignación de
+        cada robot contra la del de menor ID."""
     ids = sorted(mapas)
     if len(ids) < 2:
         return []
@@ -82,10 +81,9 @@ def acuerdo_zonas(mapas):
 def zona_propia(think, mapa):
     """V3 · la zona que el agente persigue es la que su asignación le da."""
     rid = think["id"]
-    # 24-oct-2026: la zona solo importa mientras se reparte y se busca. Al
-    # terminar (FIN), abortar (SEGURO) o fuera de misión el robot borra su
-    # memoria y su zona queda en -1, pero el BMAP sigue mostrando el último
-    # reparto: la alerta salía cada 5 s después de cada misión.
+    # La zona solo importa mientras se reparte y se busca. Al terminar (FIN),
+        # abortar (SEGURO) o fuera de misión, el robot borra su memoria y su zona
+        # queda en -1, aunque el BMAP siga mostrando el último reparto.
     if think.get("fase") not in ("DESPLEGAR", "BUSCAR"):
         return []
     esperada = mapa["de"].get(rid, -1)
@@ -117,6 +115,6 @@ def saturacion(mapa):
     return []
 
 
-# V9 (gradiente atractivo) se retiró el 28-sep-2026: la congregación ya no usa
-# feromona atractiva, la hace el MEET del laboratorio. La llegada se lee del
-# THINK (lleg=1), que es lo que declara ReactiveNavStep al alcanzar la ranura.
+# V9 no existe: la congregación no usa feromona atractiva, la hace el MEET del
+# laboratorio. La llegada se lee del THINK (lleg=1), que es lo que declara
+# ReactiveNavStep al alcanzar la ranura.

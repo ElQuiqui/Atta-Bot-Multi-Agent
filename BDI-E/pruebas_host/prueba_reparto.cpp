@@ -1,20 +1,21 @@
 /*****************************************************************************
- * prueba_reparto.cpp — El reparto de franjas por mensajes, contra el oráculo
+ * prueba_reparto.cpp — Reparto de franjas por mensajes, contra el oráculo
  *
- * Corre N agentes REALES (bdi.h + mission.h, el mismo C++ del ESP32) sobre un
+ * Corre N agentes reales (bdi.h + mission.h, el mismo C++ del ESP32) sobre un
  * bus en memoria con pérdida inyectada: cada mensaje que un agente difunde
  * llega a cada uno de los demás con probabilidad 1 − p. No hay física: los
- * robots están quietos en posiciones sorteadas, que es el caso en que el
- * resultado tiene que ser EXACTO.
+ * robots están quietos en posiciones sorteadas, el caso en que el resultado
+ * debe ser exacto.
  *
- *   R1  sin pérdida, 1 000 configuraciones de 1–5 robots: el reparto acordado
- *       es IDÉNTICO a ComputeAssignment (la versión anterior, el oráculo)
+ *   R1  sin pérdida, 1000 configuraciones de 1 a 5 robots: el reparto acordado
+ *       es idéntico al de ComputeAssignment (el oráculo)
  *   R2  con 5, 15 y 30 % de pérdida: al acordar, sin franjas repetidas e
  *       idéntico al oráculo; rondas y tiempo hasta el acuerdo
- *   R3  un robot se apaga: los demás dejan de oírlo y re-reparten entre k−1
- *   R4  un robot queda en silencio 10 s (BDIE_SILENCIO): se re-reparte al
- *       caer y otra vez al volver
- *   R5  un robot se reinicia y se reincorpora (SESSION|START unicast = JOIN)
+ *   R3  un robot se apaga: los demás dejan de oírlo y reparten entre k − 1
+ *   R4  un robot queda en silencio 10 s (BDIE_SILENCIO): se reparte de nuevo
+ *       al caer y otra vez al volver
+ *   R5  un robot se reinicia y se reincorpora (SESSION|START por unicast = JOIN)
+ *   R6  todos los mensajes del reparto caben en el analizador de comandos
  *
  *   make -f Makefile.mk reparto
  *****************************************************************************/
@@ -53,7 +54,7 @@ struct Mundo {
     void Poses() {
         char buf[256];
         int n = std::snprintf(buf, sizeof(buf), "POSES|%lu|", (unsigned long)epoch++);
-        for (size_t i = 0; i < r.size(); ++i)   // la cámara ve a TODOS, vivos o no
+        for (size_t i = 0; i < r.size(); ++i)   // la cámara ve a todos, vivos o no
             n += std::snprintf(buf + n, sizeof(buf) - n, "%d:%.0f:%.0f:0;", (int)i, r[i].x, r[i].y);
         for (auto& q : r) if (q.vivo && !q.mudo) Feed(q.a, buf, t);
     }
@@ -80,9 +81,9 @@ struct Mundo {
         r.clear(); r.resize(k);
         for (int i = 0; i < k; ++i) {
             r[i].a.Init(i, g);
-            /* En mm ENTEROS: POSES viaja con %.0f, y el oráculo tiene que ver
-             * exactamente lo que vio el agente (un redondeo cerca de una
-             * frontera de celda cambia la celda ancla). */
+            /* En mm enteros: POSES viaja con %.0f, y el oráculo debe ver exactamente lo
+             * que vio el agente (un redondeo cerca de una frontera de celda cambia la
+             * celda ancla). */
             r[i].x = (float)(int)(g.originXmm + 20 + U() * (g.cols * g.cellMm - 40));
             r[i].y = (float)(int)(g.originYmm + 20 + U() * (g.rows * g.cellMm - 40));
         }
@@ -91,8 +92,8 @@ struct Mundo {
         char s[64]; std::snprintf(s, sizeof(s), "SESSION|START|1|%.0f|%.0f", 100.0, 100.0);
         for (auto& q : r) Feed(q.a, s, t);
     }
-    /* ¿Todos los vivos y hablando dieron por acordada la MISMA ronda, con el
-     * conjunto exacto de los que hablan, y franjas distintas? */
+    /* ¿Todos los vivos que hablan dieron por acordada la misma ronda, con el
+     * conjunto exacto de los que hablan, y con franjas distintas? */
     bool Acordado() const {
         uint32_t esperado = 0;
         for (size_t i = 0; i < r.size(); ++i) if (r[i].vivo && !r[i].mudo) esperado |= 1u << i;
@@ -127,7 +128,7 @@ struct Mundo {
         char s[64]; std::snprintf(s, sizeof(s), "SESSION|START|1|%.0f|%.0f", 100.0, 100.0);
         Feed(r[j].a, s, t);
     }
-    bool Duplicado() const {     // dos vivos con la MISMA franja de la MISMA partición
+    bool Duplicado() const {     // dos vivos con la misma franja de la misma partición
         for (size_t i = 0; i < r.size(); ++i) for (size_t j = i + 1; j < r.size(); ++j) {
             if (!r[i].vivo || !r[j].vivo || r[i].mudo || r[j].mudo) continue;
             const Agent &a = r[i].a, &b = r[j].a;
@@ -160,7 +161,7 @@ static long P90(std::vector<long> v) {
 }
 
 int main() {
-    Mundo M;   // GridConfig por omisión: 16 × 10 de 150 mm, la arena medida
+    Mundo M;   // GridConfig por omisión: la cuadrícula de operación (grid.h)
 
     std::printf("R1 · sin pérdida: el reparto acordado es el del oráculo\n");
     {

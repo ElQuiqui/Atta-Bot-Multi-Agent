@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Congela el firmware de la campaña: huella SHA-256 + copia de respaldo (07-nov-2026).
+"""Congela el firmware de una campaña: huella SHA-256 y copia de respaldo.
 
-Correr DESPUÉS de flashear la versión que va a la campaña y ANTES de la primera
-corrida nominal. Desde la carpeta `Codigo/BDI-E V2`:
+Se corre después de programar la versión que va a la campaña y antes de la
+primera corrida nominal, desde la carpeta BDI-E:
 
     python base/herramientas/congelar_firmware.py
 
-Deja `_congelado_<fecha>/` con copia de robot/AttaBot/ y firmware/, y el archivo
-FIRMWARE_CONGELADO.txt con la huella de cada archivo y una huella global. La
-huella global va al informe (apéndice de datos crudos) y a la bitácora.
-Si después alguien cambia un archivo, volver a correr con --verificar muestra cuál.
+Deja `_congelado_<fecha>/` con una copia de robot/AttaBot/ y firmware/, y el
+archivo FIRMWARE_CONGELADO.txt con la huella de cada archivo y una huella
+global. Si después cambia un archivo, --verificar <carpeta> indica cuál.
 """
 import argparse
 import datetime

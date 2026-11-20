@@ -1,44 +1,40 @@
 #!/usr/bin/env python3
 # =============================================================================
-#  bdie_sim.py — Banco de pruebas de BDI-E
+#  bdie_sim.py — Banco de simulación SITL de BDI-E
 #
-#  🔴 CRITERIO NO NEGOCIABLE: acá NO hay lógica de decisión.
-#
-#  Este archivo aporta exactamente tres cosas, que son las que el robot tiene
+#  Aquí no hay lógica de decisión. Este archivo aporta lo que el robot tiene
 #  alrededor y el firmware no lleva adentro:
 #
-#     1. la FÍSICA          — importada de attabot_sim.py, copia verbatim del
-#                             repositorio Atta-Bot, con el ruido calibrado en
-#                             laboratorio (σ ArUco 30 mm, σ ángulo 2°, deriva
-#                             de motor 2 %) y el port de ReactiveNavStep()
-#     2. el CANAL de radio   — UDP sin acuse, con pérdida de paquetes inyectada
-#     3. el MODELO de sensor — el parche de color bajo el robot
+#     1. la física           — importada de attabot_sim.py (copia del
+#                              repositorio Atta-Bot), con el ruido calibrado en
+#                              laboratorio (σ ArUco 30 mm, σ ángulo 2°, deriva
+#                              de motor 2 %) y el equivalente de ReactiveNavStep()
+#     2. el canal de radio   — UDP sin acuse, con pérdida de paquetes inyectada
+#     3. el modelo de sensor — el parche de color bajo el robot
 #
-#  Todo lo demás —creencias, deseos, planes, feromona, asignación de zonas,
-#  cierre de la congregación, protocolo— lo ejecuta libbdie.so, que es el MISMO
-#  C++ que se compila para el ESP32. Hasta el voto 3-de-5 del sensor corre del
-#  lado de C++: acá solo se dice si el parche está bajo el sensor.
+#  Todo lo demás (creencias, deseos, planes, feromona, reparto de zonas, cierre
+#  de la congregación y protocolo) lo ejecuta libbdie.so, que es el mismo C++
+#  que se compila para el ESP32. Aquí solo se dice si el objetivo está al
+#  alcance del sensor.
 #
-#  LA CONGREGACIÓN es el MEET del laboratorio, y también corre en C++: las
+#  La congregación es el MEET del laboratorio, y también corre en C++: las
 #  funciones del sketch (HandleMeet, MeetSlotIndex, SafeRingSlotAngle,
-#  UpdateCongregationGoal, ReactiveNavStep…) se compilan VERBATIM en
+#  UpdateCongregationGoal, ReactiveNavStep…) se compilan tal cual en
 #  lab_cong.cpp (ver extraer_lab.py). Mientras un robot congrega, su cuerpo
 #  ejecuta la cola TURN/MOVE/WAIT/REQUEST_POSITION que arma el código del
-#  laboratorio, no el port de Python de attabot_sim.
+#  laboratorio.
 #
-#  ⚠️ EL BANCO ES MEDIO DE INGENIERÍA, NUNCA ENTREGABLE (R1 del cliente:
-#  «ya lo tuvimos simulado; si no, sería una repetición de lo anterior»).
-#  El número que produce es una PREDICCIÓN condicionada a entradas que todavía
-#  no se han medido, no un resultado de OE4. Ver §«Lo que este número no es».
+#  El banco es una herramienta de ingeniería: sus resultados dependen de un
+#  modelo del entorno y no sustituyen la validación sobre los robots físicos.
 #
 #  Uso:
 #     python3 bdie_sim.py --runs 200
 #     python3 bdie_sim.py --runs 100 --loss 0.15 --detect 60
-#     python3 bdie_sim.py --campana          # los cuatro bloques + línea base
+#     python3 bdie_sim.py --campana          # los bloques de la campaña
 #     python3 bdie_sim.py --barrido          # sensibilidad a lo no medido
-#     python3 bdie_sim.py --fallo            # 20 caídas EN BÚSQUEDA, robot visible
+#     python3 bdie_sim.py --fallo            # 20 caídas en búsqueda, robot visible
 #     python3 bdie_sim.py --reconexion       # silencio de 20 s y reinicio con JOIN
-#     BDIE_LIB=<otra .so> python3 bdie_sim.py --fallo   # «antes» con el agente viejo
+#     BDIE_LIB=<otra .so> python3 bdie_sim.py --fallo   # contra otra biblioteca
 # =============================================================================
 
 import ctypes, math, random, argparse, os, sys, json, base64
@@ -55,9 +51,8 @@ from attabot_sim import (SimRobot, SimWorld, Obstacle, ReactiveNav,
 # exigirle 50 mm hace que el robot rebote alrededor del punto.
 # (se fija más abajo, junto a la cuadrícula: depende de CELL_MM)
 
-# ── Perfil de velocidad, de AttaBot.ino:75-82 ───────────────────────────────
-# Documentado en Plataforma/DOCUMENTACION_CODIGO_AttaBot.md §3.4: con
-# samplingTime = 10 ms, baseSpeed ≈ 24.4 mm/s y maxSpeed = 5 × baseSpeed.
+# ── Perfil de velocidad, como en AttaBot.ino ────────────────────────────────
+# Con samplingTime = 10 ms, baseSpeed ≈ 24,4 mm/s y maxSpeed = 5 × baseSpeed.
 MAX_SPEED_MMS = 122.0
 MIN_SPEED_MMS = 12.0
 DECEL_MM      = 16.0          # speedReductionThreshold
@@ -82,18 +77,14 @@ ROBOT_OBSTACLE_MM = 260.0     # robotDistanceMargin
 IDENTIFY_WAIT_S   = 0.60      # ventana de IDENTIFY_OBSTACLE
 PEER_SECTOR_DEG   = 45.0      # cono del sensor IR (attabot_sim: ±45°)
 
-# ── Multiplexación temporal de los emisores IR, AttaBot.ino:91-96 ───────────
+# ── Multiplexación temporal de los emisores IR, como en AttaBot.ino ─────────
 #
-# ReadSensors() parte el tiempo en 18 ranuras de 1600 µs y cada robot elige al
-# azar una para sus IR laterales. Fuera de su ranura los emisores están
-# apagados, así que dos robots solo se leen mutuamente si CAYERON EN LA MISMA
-# RANURA — una de cada 18.
-#
-# 🔴 Salvo que hoy no es así. El punto de contacto #10 del plan de parches
-# documenta el defecto: el sorteo usa random() sin sembrar, en la inicialización
-# de variables globales, así que LOS CINCO ROBOTS OBTIENEN LA MISMA RANURA y el
-# mecanismo anti-diafonía queda anulado. Por eso el banco distingue los dos
-# casos: son dos sistemas físicos distintos.
+# ReadSensors() parte el tiempo en 18 ranuras de 1600 µs, y cada robot usa una
+# para sus IR laterales. Fuera de su ranura los emisores están apagados, así
+# que dos robots solo se leen mutuamente si caen en la misma ranura. Si la
+# ranura se sortea con random() antes de sembrar el generador, todos los robots
+# obtienen la misma y el mecanismo anti-diafonía queda anulado; por eso el
+# banco distingue los dos casos (ir="por_id" o sorteada).
 IR_RANURAS = 18
 
 # ── Arena y misión, del contrato con el cliente ─────────────────────────────
@@ -158,9 +149,8 @@ class LabOut(ctypes.Structure):
 
 def load_lib():
     here = os.path.dirname(os.path.abspath(__file__))
-    # BDIE_LIB permite correr el banco contra OTRA biblioteca —por ejemplo la del
-    # respaldo del 14-oct-2026, con el reparto por conocimiento común— y medir
-    # «antes» y «después» con el mismo entorno y las mismas semillas.
+    # BDIE_LIB permite correr el banco contra otra biblioteca y comparar dos
+        # versiones del agente con el mismo entorno y las mismas semillas.
     path = os.environ.get("BDIE_LIB") or os.path.join(here, "libbdie.so")
     if not os.path.exists(path):
         sys.exit("Falta libbdie.so — corra 'make -f Makefile.mk sitl' primero.")
@@ -218,7 +208,7 @@ def load_lib():
     lib.lab_code.restype = ctypes.c_int
     lib.bdie_alive_count.argtypes = [ctypes.c_void_p]
     lib.bdie_alive_count.restype = ctypes.c_int
-    # ── el reparto por mensajes (14-oct-2026); la biblioteca vieja no lo trae ──
+    # ── reparto por mensajes (una biblioteca anterior puede no traerlo) ──
     if hasattr(lib, "bdie_comunicar"):
         lib.bdie_comunicar.argtypes = [ctypes.c_void_p, ctypes.c_uint]
         lib.bdie_talking_mask.argtypes = [ctypes.c_void_p, ctypes.c_uint]
@@ -373,26 +363,25 @@ def run_once(seed, params, n_robots=5, loss=0.0, detect_mm=100.0,
              telemetria=None, seguir_s=0.0, muerto_visible=True,
              silencio=None, reinicio=None, muerto_obstaculo=None,
              muerto_en_vecinos=None):
-    """muerto_visible (14-oct-2026): un robot apagado SIGUE en la arena. La
-    cámara lo sigue viendo —la base lo sigue difundiendo en POSES y en
-    NEIGHBOR_POSITIONS— y para los demás es un obstáculo físico. Es lo que pasa
-    en el laboratorio. False reproduce el banco anterior, donde el robot apagado
-    desaparecía de la difusión: con eso un defecto del agente quedaba oculto.
-    silencio=(id, t0, t1): ese robot no manda ni recibe NADA entre t0 y t1 (el
-    canal del enjambre cae; sigue navegando). Es BDIE_SILENCIO en el robot.
-    reinicio=(id, t0, t1): se apaga en t0 y en t1 vuelve de fábrica; la base le
-    manda SESSION|START solo a él (BASE.SESSION|JOIN).
-    muerto_obstaculo / muerto_en_vecinos: solo para DIAGNÓSTICO; separan los
-    tres efectos de muerto_visible (en POSES, como obstáculo físico, y en la
-    lista NEIGHBOR_POSITIONS con que el MEET del laboratorio reparte ranuras).
-    None = lo mismo que muerto_visible.
+    """muerto_visible: un robot apagado sigue en la arena. La cámara lo sigue
+        viendo (la base lo sigue difundiendo en POSES y en NEIGHBOR_POSITIONS) y para
+        los demás es un obstáculo físico, como en el laboratorio. False hace que el
+        robot apagado desaparezca de la difusión.
+        silencio=(id, t0, t1): ese robot no envía ni recibe nada entre t0 y t1 (el
+        canal del enjambre cae; sigue navegando). Equivale a BDIE_SILENCIO.
+        reinicio=(id, t0, t1): se apaga en t0 y en t1 vuelve con el estado de
+        fábrica; la base le envía SESSION|START solo a él (BASE.SESSION|JOIN).
+        muerto_obstaculo / muerto_en_vecinos: solo para diagnóstico; separan los
+        tres efectos de muerto_visible (en POSES, como obstáculo físico y en la
+        lista NEIGHBOR_POSITIONS con que el MEET del laboratorio reparte ranuras).
+        None = lo mismo que muerto_visible.
 
-    telemetria: callable(t_s, id, texto) que recibe los THINK (2 Hz) y BMAP
-    (1 Hz) de cada agente vivo, codificados por el C++ de telemetry.h —lo
-    mismo que el robot le manda a la base—. Además recibe cada POSES (id=-1).
-    seguir_s: segundos que la simulación sigue corriendo después de que todos
-    volvieron (0 = cortar en el acto, lo de siempre). La observación lo usa para
-    que el log no termine en el instante exacto del último arribo."""
+        telemetria: callable(t_s, id, texto) que recibe los THINK (2 Hz) y BMAP
+        (1 Hz) de cada agente vivo, codificados por el C++ de telemetry.h, lo mismo
+        que el robot le envía a la base. Además recibe cada POSES (id=-1).
+        seguir_s: segundos que la simulación sigue después de que todos volvieron
+        (0 = cortar de inmediato), para que el registro no termine en el instante
+        exacto del último arribo."""
     rnd = random.Random(seed)
     random.seed(seed)          # attabot_sim usa random global para su ruido
 
@@ -626,7 +615,7 @@ def run_once(seed, params, n_robots=5, loss=0.0, detect_mm=100.0,
             if corre:
                 LIB.bdie_cycle(b.h, now_ms, ctypes.byref(b.out))
                 b.phase = b.out.phase
-                b.coverage = max(b.coverage, b.out.coverage)   # 17-oct: el agente borra la cobertura al terminar (FIN)
+                b.coverage = max(b.coverage, b.out.coverage)   # el agente borra la cobertura al terminar (FIN)
                 if b.out.iFoundIt:
                     b.found_it = True
 
@@ -1115,9 +1104,9 @@ def run_baseline(seed, n_robots=5, detect_mm=100.0):
 # =============================================================================
 #  Agregación y reporte
 # =============================================================================
-# 12-oct-2026: deposit 40 → 120, beta 1,0 → 0,5, bono de novedad 0,3 y plan de
-# frontera, tras la corrida de laboratorio de las 16:01 (ver pheromone_map.h).
-# novedad=1.0, frontera=0, deposit=40, beta=1.0 reproducen la versión anterior.
+# Parámetros por omisión de la exploración (ver pheromone_map.h).
+# novedad=1.0 y frontera=0 desactivan el bono de novedad y la búsqueda de
+# frontera.
 DEFAULTS = dict(alpha=1.5, beta=0.5, rho=8, deposit=120, novedad=0.3, frontera=1,
                 # Período de evaporación. 4 s, no 1 s: con deposit = 40 un
                 # depósito duraba ~34 s y se borraba antes de servir para
@@ -1202,17 +1191,12 @@ def tabla_fallo(rs):
 
 
 # =============================================================================
-#  INDICADOR DE OE2 — protocolo congelado
+#  Verificación del diseño en diez escenarios aleatorizados (--indicador)
 #
-#  Enunciado acordado por escrito con el asesor (Ing. Felipe Meza Obando):
-#
-#     «Completa con éxito al menos el 80 % de las misiones en diez escenarios
-#      aleatorizados de simulación con el SITL.»
-#
-#  TODO lo de abajo está CONGELADO y declarado ANTES de correr. Ésa es la única
-#  forma de que el indicador signifique algo: si las semillas o los parámetros
-#  se pudieran elegir después de ver el resultado, el número no sería evidencia
-#  de nada. Ver sitl/PROTOCOLO_Indicador_OE2.md.
+#  Criterio: completar con éxito al menos el 80 % de las misiones en diez
+#  escenarios aleatorizados de simulación SITL. Las semillas y los parámetros
+#  están fijados de antemano; si se pudieran elegir después de ver el
+#  resultado, el número no sería evidencia de nada.
 # =============================================================================
 
 # Las diez semillas son 1..10. No se eligieron: son los diez primeros enteros.
@@ -1227,7 +1211,7 @@ INDICADOR = dict(
     robots=5,
     loss=0.05,        # supuesto declarado: 5 % de pérdida de paquetes UDP
     detect=100.0,     # supuesto declarado: radio efectivo del sensor de color
-    ir="por_id",      # ranura de IR por robotID — ver §parche #10
+    ir="por_id",      # ranura IR derivada del ID del robot
     umbral=0.80,      # el 80 % del enunciado → 8 de 10
 )
 
@@ -1382,11 +1366,10 @@ def main():
         rs = [run_once(a.seed0+i, DEFAULTS, a.robots, a.loss, a.detect, bdi_mode=a.bdi,
                        ir_modo=a.ir) for i in range(20)]
         tabla.append(resumen(rs, "misión nominal")); print(fila(tabla[-1]))
-        # 14-oct-2026: la caída es a los 30 s, EN BÚSQUEDA. A los 180 s, como
-        # estaba, la mediana de la misión en este bloque era de 99 s: el robot
-        # se apagaba casi siempre con la misión ya terminada y el bloque no
-        # ejercitaba el fallo que dice medir. Y el robot apagado sigue en la
-        # arena (muerto_visible), como en el laboratorio.
+        # La caída ocurre a los 30 s, en plena búsqueda, para ejercitar el fallo
+                # que el bloque mide; más tarde, el robot se apagaría casi siempre con la
+                # misión ya terminada. El robot apagado sigue en la arena
+                # (muerto_visible), como en el laboratorio.
         rs = [run_once(a.seed0+500+i, DEFAULTS, a.robots, a.loss, a.detect,
                        kill_at_s=30.0, kill_id=2, bdi_mode=a.bdi, ir_modo=a.ir,
                        muerto_visible=MV) for i in range(5)]

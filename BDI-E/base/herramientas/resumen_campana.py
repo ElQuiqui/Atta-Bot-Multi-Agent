@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Resumen estadístico de la campaña sobre el enjambre físico (07-nov-2026).
+"""Resumen estadístico de una campaña sobre el enjambre físico.
 
-Implementa `Indicadores/PLAN_Analisis_Resultados.md` (fijado ANTES de los datos):
-tasas por fase con IC de Clopper–Pearson y Wilson, prueba binomial exacta de la
-tasa de misión contra p0 = 0,80, fracción de agentes con bootstrap por
-conglomerados, tiempos por fase (mediana con IC bootstrap, media ± U con k = 2),
-Kaplan–Meier con censura, comparación con la línea base (log-rank y
+Calcula, con el plan de análisis fijado antes de los datos: tasas por fase con
+intervalos de Clopper–Pearson y de Wilson, prueba binomial exacta de la tasa de
+misión contra p0 = 0,80, fracción de agentes con bootstrap por conglomerados,
+tiempos por fase (mediana con intervalo bootstrap, media ± U con k = 2),
+Kaplan–Meier con censura, comparación con una línea base si la hay (log-rank y
 Mann–Whitney), métricas de la cámara (radio del enjambre en el retorno,
 distancia mínima entre robots, recorrido, error en la base) y tendencia contra
 el orden de las corridas. Python puro; matplotlib solo para las figuras.
@@ -13,15 +13,15 @@ el orden de las corridas. Python puro; matplotlib solo para las figuras.
 Entradas
   · la hoja de corrida (`campana_hoja_corrida.csv`): una fila por corrida, con
     `archivo_think` (nominales) o `archivo_consola` (línea base), validez e
-    intervenciones. Una corrida inválida que se repite = dos filas con el mismo
-    `orden`; la inválida lleva `valida_s_n = n` y su causa.
-  · los logs de la base: `base/BdieLogs/*_think.csv`, `*_poses.csv`,
+    intervenciones. Una corrida inválida que se repite son dos filas con el
+    mismo `orden`; la inválida lleva `valida_s_n = n` y su causa.
+  · los registros de la base: `base/BdieLogs/*_think.csv`, `*_poses.csv`,
     `base/ConsoleLogs/*.csv`.
 
-Uso (desde `Codigo/BDI-E V2/base`):
+Uso (desde BDI-E/base):
     python herramientas/resumen_campana.py
     python herramientas/resumen_campana.py --hoja ../campana_hoja_corrida.csv --salida herramientas/resumen_campana
-    python herramientas/resumen_campana.py --prueba-24oct     # ensayo con las corridas del 24-oct
+    python herramientas/resumen_campana.py --prueba-24oct     # ensayo con corridas de prueba
 
 Salidas (en --salida): resumen.md · por_corrida.csv · por_agente.csv ·
 tabla_fases.tex · figuras PDF (si hay matplotlib).
@@ -39,14 +39,14 @@ from collections import defaultdict
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.dirname(AQUI)
-RAIZ = os.path.dirname(BASE)                      # Codigo/BDI-E V2
+RAIZ = os.path.dirname(BASE)                      # carpeta BDI-E
 
 T_LIM = 1200.0          # tiempo límite de misión (s)
 T_LIM_LB = 600.0        # la caminata aleatoria del firmware dura 600 s
 P0 = 0.80               # umbral de la tasa de misión exitosa (M1)
 ALFA = 0.05
 U_T = 0.15 / math.sqrt(3)   # tipo B de un instante: THINK al cambiar (≥ 100 ms) + viaje (~50 ms), rectangular
-SIGMA_POS = 8.0         # σ ArUco por eje (mm), PRELIMINAR (OE1)
+SIGMA_POS = 8.0         # σ de la posición ArUco por eje (mm)
 DIAM = 150.0            # diámetro del robot (mm)
 SALTO_POSE = 300.0      # salto entre poses consecutivas que se descarta como error de ArUco (mm)
 N_BOOT = 10000
@@ -329,12 +329,12 @@ def analizar_nominal(think, fila, dv):
 
     interv = ids_intervenidos(fila.get('intervenciones_hora_robot_fase_que'))
     N = len(ids)
-    # CRITERIO DE ÉXITO (07-nov-2026 15:26, autor; adoptado tras 5 corridas y aplicado a todas):
-    # misión exitosa = se detecta el objetivo, la congregación se cierra (quórum o temporizador) y
-    # todos los agentes OPERATIVOS llegan a su ranura y vuelven a la base antes de 20 min, sin
-    # intervención. «Baja» (columna `bajas`) = robot que se apaga (batería/energía) o queda
-    # inmovilizado: sale de lo que exige la misión pero cuenta como agente NO exitoso en M2.
-    # Se calcula además el criterio LITERAL del cliente (todos, sin bajas, en la ranura antes del cierre).
+    # Criterio de éxito: se detecta el objetivo, la congregación se cierra (quórum o
+        # temporizador) y todos los agentes operativos llegan a su ranura y vuelven a la
+        # base antes de 20 min, sin intervención. Una «baja» (columna `bajas`) es un robot
+        # que se apaga (batería) o queda inmovilizado: no se le exige completar la misión,
+        # pero cuenta como agente no exitoso en M2. Se calcula además la tasa sin bajas,
+        # con todos los robots en la ranura antes del cierre.
     bajas = set(re.findall(r'\d+', fila.get('bajas', '') or ''))
     ids_m = [i for i in ids if i not in bajas]
     Nm = len(ids_m)
@@ -361,8 +361,8 @@ def analizar_nominal(think, fila, dv):
         cob_det=cob_det, det_verdadera=det_verdadera,
         F1=F1, F2=F2, F2b=F2b, F3=F3, F4=F4,
         intervenida=bool(interv), mision_exitosa=mision, todos_fin=todos('fin'),
-        # 07-nov 15:24: el autor puede contar como buena una corrida que no cumple el criterio fijado
-        # (columna `exito_autor` = s). Se reporta APARTE de M1, nunca en su lugar.
+        # La columna `exito_autor` = s permite marcar como buena una corrida que no cumple
+                # el criterio fijado; se reporta aparte de M1, nunca en su lugar.
         literal=literal,
         exito_autor=mision or (fila.get('exito_autor') or '').strip().lower().startswith('s'),
         reclasificada=(not mision) and (fila.get('exito_autor') or '').strip().lower().startswith('s'),

@@ -1,16 +1,16 @@
 """
-bdie_panel.py — los paneles BDI-E de la GUI: el mapa y la mente del enjambre
+bdie_panel.py — paneles BDI-E de la GUI: el mapa y la mente del enjambre
 
-  MapaBdieWidget   la cuadrícula tal como la ve UN robot (o todos): feromona
-                   repelente, campo atractivo, cobertura acumulada o zonas,
-                   con los robots, sus metas, el objetivo y la base encima.
+  MapaBdieWidget   la cuadrícula tal como la ve un robot (o todos): feromona
+                   repelente, cobertura acumulada o zonas, con los robots, sus
+                   metas, el objetivo y la base encima.
   MenteBdieWidget  una fila por robot con lo que está pensando (fase, deseo,
                    plan, meta, zona, objetivo, último evento) y las alertas de
                    las verificaciones en vivo (bdie_checks.py).
 
-Leen del BdieMonitor de la base (base.bdie) con snapshot(): nunca tocan los
-datos del hilo de red directamente. Todo lo que se ve acá está también en
-BdieLogs/, así que lo que se observa en la prueba queda para el informe.
+Leen del BdieMonitor de la base (base.bdie) con snapshot(): nunca tocan
+directamente los datos del hilo de red. Todo lo que se ve aquí queda también en
+BdieLogs/.
 """
 import math
 import time

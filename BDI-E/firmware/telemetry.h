@@ -1,36 +1,33 @@
 /*****************************************************************************
- * telemetry.h — Qué está pensando cada robot, contado a la base
+ * telemetry.h — Telemetría de razonamiento hacia la base
  *
- * INSTRUMENTACIÓN, NO PROTOCOLO DE MISIÓN. Nada de lo que sale de acá lo lee
- * otro robot, y la misión no depende de que llegue: si la base no escucha, el
- * enjambre hace exactamente lo mismo. Va UNICAST a la base (no por broadcast),
- * así los pares no gastan su parser en paquetes que no les sirven.
+ * Instrumentación, no protocolo de misión: ningún robot lee estos mensajes y
+ * la misión no depende de que lleguen. Van por unicast a la base, para que los
+ * demás robots no gasten su analizador en paquetes que no les sirven.
  *
- * Sin Arduino, igual que los headers de decisión: el robot y el banco
- * (sitl/bdie_bridge.cpp) codifican con ESTA función, así que lo que la GUI
- * muestra en una prueba de banco es byte a byte lo que mostraría con robots.
+ * Sin dependencias de Arduino: el robot y el banco (sitl/bdie_bridge.cpp)
+ * codifican con estas mismas funciones, así que la GUI muestra en el banco
+ * exactamente lo que mostraría con robots.
  *
- * DOS MENSAJES, formato clave=valor (la base los parte por '|' y '='):
+ * Dos mensajes, en formato clave=valor (la base los parte por '|' y '='):
  *
  *   THINK|id=2|t=..|fase=BUSCAR|deseo=EXPLORAR|plan=P_EXPLORAR_ACO|meta=45|
  *        celda=44|zona=1|enzona=1|x=812|y=430|obj=1|dueno=2|cobj=47|cerr=0|
  *        lleg=0|meet=0|vivos=1f|delib=312|cob=58|ev=ARRIVED|tev=..|reint=0|
  *        sinprog=3200|rep=3|racu=1|zfb=0
- *     vivos = los que el agente OYE (14-oct-2026; antes, los que veía la
- *     cámara). rep = ronda del reparto, racu = 1 si la di por acordada,
- *     zfb = veces que se usó el respaldo por conocimiento común.
- *     2 Hz, e INMEDIATO (con un piso de 100 ms) cuando cambia algo que el
- *     agente decidió: fase, deseo, plan, meta, zona, objetivo o cierre.
+ *     vivos = máscara de los robots que el agente oye; rep = ronda del
+ *     reparto; racu = 1 si el robot la dio por acordada; zfb = veces que se
+ *     usó el reparto de respaldo. Se envía a 2 Hz, y de inmediato (con un piso
+ *     de 100 ms) cuando cambia algo que el agente decidió: fase, deseo, plan,
+ *     meta, zona, objetivo o cierre.
  *
  *   BMAP|id=2|t=..|g=filas,cols,celda,ox,oy|kz=5|z=r0.r1.c0.c1;..|
  *        of=id:zona,..|R=<hex>|V=<hex>|B=<hex>
- *     1 Hz. R: un byte por celda (repelente). V y B: bitmaps (cobertura
- *     acumulada, celdas bloqueadas). Con 160 celdas mide ~480 B,
- *     cabe en un datagrama y en el recvfrom de la base.
+ *     A 1 Hz. R: un byte de feromona por celda; V y B: mapas de bits de
+ *     cobertura acumulada y de celdas bloqueadas. Cabe en un datagrama.
  *
- * Cuesta, medido en el host: THINK ~215 B y BMAP ~475 B por robot. Con cinco
- * robots son ~4,5 kB/s hacia la base. BDIE_TELEM|0 lo apaga (experimento de
- * latencia); BDIE_TELEM|1 deja solo THINK.
+ * BDIE_TELEM|0 apaga la telemetría (para medir latencia sin ella) y
+ * BDIE_TELEM|1 deja solo THINK.
  *****************************************************************************/
 #ifndef BDIE_TELEMETRY_H
 #define BDIE_TELEMETRY_H

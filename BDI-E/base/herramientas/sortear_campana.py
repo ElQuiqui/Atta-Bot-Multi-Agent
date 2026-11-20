@@ -1,31 +1,30 @@
 #!/usr/bin/env python3
-"""Sortea las posiciones del objetivo y de la base para la campaña (07-nov-2026).
+"""Sortea las posiciones del objetivo y de la base para una campaña.
 
-Regla (D6, Indicadores/PLAN_Analisis_Resultados.md):
+Regla:
   - objetivo uniforme en el área libre, a >= MARGEN_OBJ mm de las paredes y a
     >= DIST_MIN mm de la base;
   - base uniforme a >= MARGEN_BASE mm de las paredes (deja lugar a los robots
-    que se estacionan alrededor, ~170 mm), o FIJA con --base x,y (decisión del
-    autor 07-nov-2026: base siempre en (300, 300), robots arrancan junto a ella);
+    que se ubican a su alrededor, ~170 mm), o fija con --base x,y;
   - ni objetivo ni base a < SEP_INI mm de una posición inicial de robot
     (si se pasan con --iniciales);
-  - semilla fija; la lista se genera y se guarda ANTES de la primera corrida.
+  - semilla fija: la lista se genera y se guarda antes de la primera corrida.
 
 Bloques: N nominales (en el orden sorteado) y luego la línea base, que repite
 los escenarios 1..L de la lista nominal (mismas posiciones, otra estrategia).
 
-Uso (desde `Codigo/BDI-E V2`):
-  python base/herramientas/sortear_campana.py --base 300,300   # lo de la campaña (07-nov)
+Uso (desde la carpeta BDI-E):
+  python base/herramientas/sortear_campana.py --base 300,300   # base fija
   python base/herramientas/sortear_campana.py                  # base también sorteada
-  python herramientas/sortear_campana.py --iniciales "300,1200;600,1200;900,1200"
+  python base/herramientas/sortear_campana.py --iniciales "300,1200;600,1200;900,1200"
 """
 import argparse
 import csv
 import math
 import random
 
-# Área libre de la arena con los robots estacionados (grid.h, 17-oct-2026):
-# x en [10, 1910], y en [0, 1400] mm (origen esquina superior izquierda).
+# Área libre de la arena, la misma de la cuadrícula (grid.h):
+# x en [10, 1910], y en [0, 1400] mm (origen en la esquina superior izquierda).
 X0, X1, Y0, Y1 = 10.0, 1910.0, 0.0, 1400.0
 MARGEN_OBJ = 200.0
 MARGEN_BASE = 300.0

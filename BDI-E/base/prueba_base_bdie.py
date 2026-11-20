@@ -1,23 +1,23 @@
 """
-prueba_base_bdie.py — la base parcheada, probada sin cámara, sin red y sin robots
-=================================================================================
+prueba_base_bdie.py — la base con BDI-E, probada sin cámara, sin red y sin robots
+==================================================================================
 
-Qué verifica (B0–B4 de AttaBot_Base.py):
+Qué verifica:
 
-  P1  el broadcast lleva a TODOS los robots visibles de la prueba, en un paquete
+  P1  la difusión lleva a todos los robots visibles de la prueba, en un paquete
   P2  excluye el ArUco de referencia y los marcadores que no son robots
-  P3  un robot QUIETO sigue apareciendo (no pasa por el filtro de 4 mm / 4°)
-  P4  el epoch avanza en cada paquete
+  P3  un robot quieto sigue apareciendo (no pasa por el filtro de 4 mm / 4°)
+  P4  la época avanza en cada paquete
   P5  SESSION.START exige la posición de la base; sin ella no envía nada
-  P6  SESSION.START reinicia el epoch y se repite 3 veces; ABORT también
+  P6  SESSION.START reinicia la época y se repite 3 veces; ABORT también
   P7  readUdpConnection entrega HB y TGT al observador
   P8  (opcional) cada paquete lo decodifica el mismo mission.h del robot
-  P11 el reparto acordado (ZA) llega al observador; el reclamo (ZC) se calla
-  P9  V2: BASE.SESSION|… por el despachador único del laboratorio, y el esquema
-  P10 V2: THINK y BMAP llegan al monitor BDI-E y se decodifican
+  P9  BASE.SESSION|… pasa por el despachador único del laboratorio, y el esquema
+  P10 THINK y BMAP llegan al monitor BDI-E y se decodifican
+  P11 el reparto acordado (ZA) llega al observador; el reclamo (ZC) se ignora
 
-Uso, desde Codigo/BDI-E V2/base:
-    python3 prueba_base_bdie.py            # P1–P7
+Uso, desde BDI-E/base:
+    python3 prueba_base_bdie.py            # P1–P7, P9–P11
     python3 prueba_base_bdie.py --firmware # + P8, compila mission.h con g++
 """
 import os
@@ -168,7 +168,7 @@ def main():
          b'vivos=3|delib=9|cob=4|ev=ARRIVED|tev=4|reint=0|sinprog=0', ('10.0.0.1', 6060)),
         (b'BMAP|id=1|t=5|g=2,2,150.0,0.00,0.00|kz=2|z=0.1.0.0;0.1.1.1|of=1:0,2:1|'
          b'R=28000000|A=00000000|V=01|B=00', ('10.0.0.1', 6060)),
-        # reparto por mensajes (14-oct-2026): el ZC se calla, el ZA se registra
+        # reparto por mensajes: el ZC se ignora, el ZA se registra
         (b'ZC|3:6|1|0|2', ('10.0.0.1', 6060)),
         (b'ZA|3:6|1|0|2', ('10.0.0.1', 6060)),
         (b'ZA|3:6|1|0|2', ('10.0.0.1', 6060)),      # repetido cada 2 s: una sola vez

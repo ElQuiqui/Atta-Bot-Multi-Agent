@@ -1,27 +1,29 @@
-// Protocolo con la Base: envio de mensajes y despacho de los comandos UDP.
+// ============================================================================
+// comandos.ino — Protocolo con la base: envío de mensajes y despacho de los
+// comandos UDP.
 //
-// ReadUdpPackets() es el punto de entrada: parsea el datagrama, separa el
-// comando de sus argumentos y ejecuta. Todo lo que la Base puede pedirle al
-// robot entra por aca.
+// ReadUdpPackets() es el punto de entrada: analiza el datagrama, separa el
+// comando de sus argumentos y lo ejecuta. Todo lo que la base puede pedirle al
+// robot entra por aquí.
 //
 // Arduino concatena todos los .ino de la carpeta en una sola unidad de
-// traduccion — primero AttaBot.ino, despues el resto en orden alfabetico — asi
-// que las constantes, las variables globales y las declaraciones forward viven
-// en AttaBot.ino y desde aca se ven directo, sin extern ni cabeceras.
+// traducción (primero AttaBot.ino y después el resto en orden alfabético), así
+// que las constantes, las variables globales y las declaraciones adelantadas
+// están en AttaBot.ino y desde aquí se ven directamente.
 
 // ============================================================================
 // FUNCIONES DE COMUNICACIÓN
 // ============================================================================
 
-// Manda un datagrama UDP al host indicado, en el puerto del protocolo.
+// Envía un datagrama UDP al host indicado, en el puerto del protocolo.
 void SendMessage(IPAddress host, const char *message) {
   udp.beginPacket(host, localPort);
   udp.write(reinterpret_cast<const uint8_t *>(message), strlen(message));
   udp.endPacket();
 }
 
-// printf de depuracion hacia la Base. Solo sale si el modo debug esta activo
-// (CONFIG|DEBUG|n), asi que las trazas se prenden sin reflashear.
+// printf de depuración hacia la base. Solo sale si el modo de depuración está
+// activo (CONFIG|DEBUG|n), así que las trazas se encienden sin reprogramar.
 void MessageDebugf(const char *format, ...) {
   char buffer[200];
   va_list args;
@@ -37,7 +39,7 @@ void MessageDebugf(const char *format, ...) {
   debugCounter++;
 }
 
-// Le reporta a la Base la pose que el robot cree tener.
+// Le reporta a la base la pose que el robot cree tener.
 void SendPose() {
   obstacles.robotDetected = false;
   obstacles.robotPaso = 0;
@@ -50,8 +52,8 @@ void SendPose() {
 }
 
 // Parte un mensaje del protocolo por su delimitador. Devuelve siempre seis
-// campos, con vacios al final si vinieron menos, para que los handlers puedan
-// leer argumentos opcionales sin chequear la cantidad.
+// campos, con vacíos al final si llegaron menos, para que los manejadores puedan
+// leer argumentos opcionales sin comprobar la cantidad.
 std::array<String, 6> SeparateCommand(const String &command, char delimiter) {
   std::array<String, 6> results;
   int startIndex = 0;
@@ -74,7 +76,7 @@ std::array<String, 6> SeparateCommand(const String &command, char delimiter) {
 }
 
 // ============================================================================
-// FUNCIÓN DE LECTURA DE PAQUETES UDP (REFACTORIZADA)
+// LECTURA DE PAQUETES UDP Y MANEJADORES
 // ============================================================================
 
   // CONFIG
@@ -84,10 +86,10 @@ void HandleConfig(const std::array<String, 6> &arguments) {
     IPAddress ipAddress;
     ipAddress.fromString(arguments[2]);
     robots["Broadcast"] = ipAddress;
-    // Reset completo: limpia cualquier navegación activa de sesiones anteriores.
-    // Incluye congregación/dispersión: si no, un robot que quedó de LÍDER en la
-    // prueba anterior sigue difundiendo LEADER_POSITION a 4Hz en la nueva sesión
-    // (rol persiste en RAM y CONFIG|START no lo limpiaba) → inunda y estorba.
+    // Reinicio completo: limpia cualquier navegación activa de sesiones
+        // anteriores, incluidas la congregación y la dispersión. Si no, un robot que
+        // quedó como líder en la prueba anterior seguiría difundiendo LEADER_POSITION
+        // a 4 Hz en la sesión nueva.
     instructionList.clear();
     isEvading = false;
     obstacles.Clear();
@@ -206,9 +208,9 @@ void HandlePose(const std::array<String, 6> &arguments) {
     float angleDiff = NormalizeAngle(newAngle - robotPose.angle);
 
     if (distanceJump > max_pose_jump || abs(angleDiff) > max_angle_jump) {
-      // Saltos consistentes = la pose interna quedó obsoleta (robot movido a
-      // mano, cambio de origen). Tras varios rechazos seguidos, re-sincronizar
-      // con la cámara en vez de quedar atrapado ignorando para siempre.
+      // Saltos consistentes: la pose interna quedó obsoleta (robot movido a mano,
+            // cambio de origen). Tras varios rechazos seguidos se vuelve a sincronizar
+            // con la cámara en vez de ignorarla para siempre.
       poseJumpRejections++;
       if (poseJumpRejections < max_pose_jump_rejections) {
         char buffer[150];
@@ -231,31 +233,24 @@ void HandlePose(const std::array<String, 6> &arguments) {
   robotPose.y = newY;
   robotPose.angle = newAngle;
 
-  // EKF: corregir con CADA pose de la Base, no solo con POSITION_RESPONSE.
-  //
-  // Hasta 2026-08-05 la unica llamada a UpdateAruco estaba en
-  // HandlePositionResponse, que corre cuando el robot PIDE su posicion: medido
-  // en el lab del 05-08, cada 15-23s por robot. Entre medio el filtro integraba
-  // gyro+encoders a ciegas y el rumbo derivaba 60-120°, mientras la Base le
-  // mandaba una pose absoluta ~20 veces por segundo que se descartaba para el
-  // EKF. Eran unas 400 correcciones tiradas entre cada correccion real.
-  //
-  // El sintoma no se veia con los robots congregados (quietos, un rumbo viejo
-  // cuesta poco en posicion) y explotaba en RANDOMW, que es traslacion continua:
-  // p95 de 291mm durante MEET contra 2699mm durante la caminata aleatoria.
-  //
-  // Se llama DESPUES del filtro de saltos, asi que una pose rechazada por salto
-  // tampoco entra al EKF. Y UpdateAruco ya trae su compuerta de Mahalanobis, que
-  // descarta lo incoherente y re-inicializa tras MAX_GATE_REJECTS seguidos: dos
-  // capas de rechazo, no una. Sin inicializar, la primera llamada hace el Init,
-  // que es mejor que esperar al primer REQUEST_POSITION.
+  // EKF: corregir con cada pose que difunde la base, no solo con
+    // POSITION_RESPONSE. Si solo se corrigiera cuando el robot pide su posición
+    // (cada 15–23 s), entre medio el filtro integraría giroscopio y encoders a
+    // ciegas y el rumbo derivaría decenas de grados, mientras la base envía una
+    // pose absoluta unas 20 veces por segundo.
+    //
+    // Se llama después del filtro de saltos, así que una pose rechazada por salto
+    // tampoco entra al EKF; además, UpdateAruco tiene su propia compuerta de
+    // Mahalanobis, que descarta lo incoherente y reinicializa tras
+    // MAX_GATE_REJECTS rechazos seguidos. Sin inicializar, la primera llamada hace
+    // el Init, en vez de esperar al primer REQUEST_POSITION.
   ekf.UpdateAruco(robotPose.x, robotPose.y, robotPose.angle);
 
-  // Decentralizado: si este robot es el líder de congregación, difunde su
-  // propia pose a los peers por WiFi (la Base es solo sensor de localización).
-  // Un líder quieto solo hacía REQUEST_POSITION una vez → los seguidores se
-  // quedaban sin actualizaciones para progresar staging→parking ni seguirlo.
-  // POSE llega cada frame (~15-20Hz); se throttlea a ~4Hz para no saturar.
+  // Descentralizado: si este robot es el líder de la congregación, difunde su
+    // propia pose a los demás por WiFi (la base es solo el sensor de
+    // localización); así los seguidores reciben actualizaciones aunque el líder
+    // esté quieto. POSE llega en cada cuadro (15–20 Hz) y se limita a unos 4 Hz
+    // para no saturar la red.
   if (congregation.isLeader && congregation.leaderID != "-1" &&
       (millis() - lastLeaderCast) >= 250) {
     lastLeaderCast = millis();
@@ -327,8 +322,8 @@ void HandleCheckObstacle(const std::array<String, 6> &arguments) {
   if (IsRobotObstacle(x, y, angle, sensors, id)) {
     char buffer[50];
     if (pasoNegociado && id != "-1" && robotID != "-1") {
-      // Me muevo si tengo navegación o instrucciones pendientes; parado en la
-      // ranura de la congregación, en la base o sin sesión, estoy QUIETO.
+      // El robot se mueve si tiene navegación o instrucciones pendientes; parado en
+            // la ranura de la congregación, en la base o sin sesión, está QUIETO.
       const bool meMuevo = nav.isActive || !instructionList.empty();
       const char p = DecidirPaso(robotID.toInt(), id.toInt(), meMuevo);
       snprintf(buffer, sizeof(buffer), "OBSTACLE_DETECTED|%s|%s", robotID.c_str(), NombrePaso(p));
@@ -344,7 +339,7 @@ void HandleCheckObstacle(const std::array<String, 6> &arguments) {
   // OBSTACLE_DETECTED
 void HandleObstacleDetected(const std::array<String, 6> &arguments) {
   // Con varios robots delante gana la respuesta más restrictiva: basta un QUIETO
-  // o un SIGO para evadir; el CEDO solo cuenta si nadie dijo otra cosa.
+    // o un SIGO para evadir; CEDO solo cuenta si nadie dijo otra cosa.
   char p = 0;
   if (arguments[2] == "QUIETO") p = 'Q';
   else if (arguments[2] == "SIGO") p = 'S';
@@ -372,18 +367,17 @@ void HandleSendCountMessage(const std::array<String, 6> &arguments) {
   SendMessage(robots["Base"], buffer);
 }
 
-  // MEET|x|y — congregarse alrededor de un PUNTO, sin robot líder. Es el
-  // experimento de topología: los robots cruzan la barrera y se agrupan en el
-  // otro extremo aunque allí no haya nadie.
-  //
-  // No es un GT: con GT los N robots apuntarían al MISMO punto y terminarían
-  // amontonados y evadiéndose entre sí. Acá cada uno toma su slot del anillo
-  // (mismo SafeRingSlotAngle de siempre), así que llegan repartidos.
-  //
-  // Va por BROADCAST literal: el índice de slot y el tamaño del enjambre NO los
-  // reparte la Base, los saca cada robot de la lista de vecinos que ya recibe
-  // por NEIGHBOR_POSITIONS (1 Hz). Todos ven la misma lista, así que todos
-  // calculan la misma repartición sin negociar y ninguno pisa el slot de otro.
+  // MEET|x|y — congregarse alrededor de un punto, sin robot líder.
+    //
+    // No es un GT: con GT todos los robots apuntarían al mismo punto y terminarían
+    // amontonados y evadiéndose entre sí. Aquí cada uno toma su ranura del anillo
+    // (SafeRingSlotAngle), así que llegan repartidos.
+    //
+    // Se envía por difusión: el índice de ranura y el tamaño del enjambre no los
+    // reparte la base, los calcula cada robot a partir de la lista de vecinos que
+    // recibe por NEIGHBOR_POSITIONS (1 Hz). Todos ven la misma lista, así que
+    // todos calculan el mismo reparto sin negociar y ninguno pisa la ranura de
+    // otro.
 void HandleMeet(const std::array<String, 6> &arguments) {
   congregation.leaderID = "VIRTUAL";
   congregation.isLeader = false;
@@ -391,20 +385,14 @@ void HandleMeet(const std::array<String, 6> &arguments) {
   congregation.globalTargetX = arguments[1].toFloat();
   congregation.globalTargetY = arguments[2].toFloat();
 
-  // n sale de los vecinos que este robot conoce; el anillo, de la SEPARACIÓN
-  // que se quiere entre slots vecinos: R = sep / (2·sin(π/n)) es el radio con
-  // el que la cuerda entre dos slots contiguos mide exactamente MEET_SEP.
-  //
-  // Antes era max(300, n·250/2π): arco por robot (no cuerda) y un piso de
-  // 300mm que con pocos robots abría el grupo de gordo — con 4 robots pedía
-  // 159mm y el piso lo subía a 300, dejándolos a 424mm entre sí. Con muchos
-  // robots ambas fórmulas coinciden (n=10: 398 vs 405mm), así que esto solo
-  // aprieta la congregación chica, que es donde sobraba radio.
-  //
-  // MEET|x|y|R fuerza el radio (mismo rango que NAV_CONFIG|PARKING_DIST) para
-  // tantear en vivo sin reflashear; sin el 3er argumento manda la fórmula.
-  // Separacion centro a centro entre slots vecinos, y piso del radio: 150mm de
-  // cuerpo mas el error de pose.
+  // n sale de los vecinos que este robot conoce, y el radio del anillo, de la
+    // separación deseada entre ranuras vecinas: R = sep / (2·sin(π/n)) es el
+    // radio con el que la cuerda entre dos ranuras contiguas mide MEET_SEP.
+    //
+    // MEET|x|y|R fuerza el radio (mismo rango que NAV_CONFIG|PARKING_DIST), para
+    // probar en vivo sin reprogramar; sin el tercer argumento se usa la fórmula.
+    // MEET_SEP es la separación entre centros de ranuras vecinas, y MEET_RMIN, el
+    // piso del radio: el cuerpo del robot más el error de pose.
   const float MEET_SEP  = 250.0f;
   const float MEET_RMIN = 200.0f;
   int n = disperse.nCount + 1;
@@ -442,9 +430,9 @@ void HandleMeet(const std::array<String, 6> &arguments) {
   instructionList.push_back(fsmInstruction);
 }
 
-// CONGREGATION|<lider>|<indice>|<total> — arranca la congregacion sobre el
-// anillo del lider. Con VIRTUAL en vez de un id, el punto de reunion es fijo y
-// no hay nadie difundiendo pose.
+// CONGREGATION|<líder>|<índice>|<total> — arranca la congregación sobre el
+// anillo del líder. Con VIRTUAL en vez de un id, el punto de reunión es fijo y
+// nadie difunde su pose.
 void HandleCongregation(const std::array<String, 6> &arguments) {
   congregation.leaderID = arguments[1];
   congregation.isLeader = (congregation.leaderID == robotID);
@@ -473,9 +461,10 @@ void HandleCongregation(const std::array<String, 6> &arguments) {
   instructionList.push_back(fsmInstruction);
 }
 
-  // FORMATION — congregación con forma: linea/cuna/circulo (+ eje opcional)
-  // FORMATION|<forma>|<líderID>|<idx>|<n>|[axis°]. Mismo flujo que CONGREGATION;
-  // solo cambia la fórmula del slot (ver LEADER_POSITION). circulo == congregación.
+  // FORMATION — congregación con forma: línea, cuña o círculo (+ eje opcional).
+    // FORMATION|<forma>|<líderID>|<idx>|<n>|[eje°]. Mismo flujo que CONGREGATION;
+    // solo cambia la fórmula de la ranura (ver LEADER_POSITION). circulo equivale
+    // a la congregación.
 void HandleFormation(const std::array<String, 6> &arguments) {
   congregation.formationShape = arguments[1];
   congregation.leaderID = arguments[2];
@@ -507,23 +496,15 @@ void HandleFormation(const std::array<String, 6> &arguments) {
   instructionList.push_back(fsmInstruction);
 }
 
-  // GT — Navegación reactiva al objetivo
-  // Uso: GT|x|y          — navega al objetivo
-  //      GT|x|y|seg      — ídem con segmento personalizado (50–400mm)
-  //
-  // Hasta 2026-08-05 esto mismo respondía además a GOTO, POSITIONGT y BUG2.
-  // No eran variantes: los cuatro nombres caían en este handler y el nombre ni
-  // siquiera llegaba acá, así que elegir uno u otro no cambiaba nada. BUG2
-  // sobrevivía de cuando existió ese algoritmo, y se quedó como alias cuando se
-  // borró el código muerto. Cuatro formas de pedir lo mismo obligan a leer el
-  // firmware para descubrir que dan igual.
+  // GT — navegación reactiva a un punto.
+    // Uso: GT|x|y          navega al punto
+    //      GT|x|y|seg      ídem con segmento personalizado (50–400 mm)
 void HandleNavigationTarget(const std::array<String, 6> &arguments) {
   float targetX = arguments[1].toFloat();
   float targetY = arguments[2].toFloat();
 
-  // El destino tiene que caer dentro de la arena en curso (NAV_CONFIG|ARENA),
-  // no dentro de una constante: con el tope fijo un montaje más grande queda
-  // recortado y uno más chico acepta destinos que la cámara no ve.
+  // El destino debe caer dentro de la arena en curso (NAV_CONFIG|ARENA), no de
+    // una constante fija.
   if (targetX < 0 || targetX > arenaWidthMm ||
       targetY < 0 || targetY > arenaHeightMm) {
     char buffer[100];
@@ -545,8 +526,8 @@ void HandleNavigationTarget(const std::array<String, 6> &arguments) {
   nav.goalY       = targetY;
   nav.pendingInit = true;
   nav.isActive    = false;
-  // Re-anclar el EKF al empezar: entre comandos sigue integrando odometría a
-  // ciegas y puede arrancar la navegación con metros de deriva acumulada.
+  // Volver a anclar el EKF al empezar: entre comandos sigue integrando odometría
+    // a ciegas y la navegación podría arrancar con deriva acumulada.
   ekf.Reset();
   blindNavSteps = 0;
   instructionList.clear();
@@ -575,9 +556,9 @@ void HandlePositionResponse(const std::array<String, 6> &arguments) {
   robotPose.angle = arguments[3].toFloat();
   congregation.poseFresh = true;
 
-  // Congregación VIRTUAL: no hay líder que difunda su pose, así que el
-  // recálculo del slot se dispara acá, con cada pose propia nueva. El punto
-  // es fijo, de modo que el goal converge en cuanto se ancla el slot.
+  // Congregación VIRTUAL: no hay líder que difunda su pose, así que la ranura se
+    // recalcula aquí, con cada pose propia nueva. El punto es fijo, de modo que la
+    // meta converge en cuanto se ancla la ranura.
   if (congregation.hasGlobalTarget && !congregation.isLeader) {
     UpdateCongregationGoal(congregation.globalTargetX,
                            congregation.globalTargetY, 0.0f);
@@ -587,8 +568,9 @@ void HandlePositionResponse(const std::array<String, 6> &arguments) {
       "DEBUG: -1, ID: %s, Posición recibida: x=%.1f, y=%.1f, ángulo=%.1f",
       robotID.c_str(), robotPose.x, robotPose.y, robotPose.angle);
 
-  // EKF: corrección ArUco. La innovación mide qué tan lejos venía la
-  // predicción (encoders+gyro) de la cámara — la métrica de validación.
+  // EKF: corrección con ArUco. La innovación mide qué tan lejos venía la
+    // predicción (encoders + giroscopio) de la cámara, y sirve para validar el
+    // filtro.
   bool ekfWasInit = ekf.initialized;
   float ekfInnov = ekf.UpdateAruco(robotPose.x, robotPose.y, robotPose.angle);
   if (ekfWasInit) {
@@ -631,7 +613,7 @@ void HandleLeaderPosition(const std::array<String, 6> &arguments) {
   }
 }
 
-  // CANCEL_CONGREGATION — también termina la dispersión (mismo "alto enjambre")
+  // CANCEL_CONGREGATION — también termina la dispersión
 void HandleCancelCongregation(const std::array<String, 6> &arguments) {
   congregation.Reset();
   disperse.Reset();
@@ -641,8 +623,8 @@ void HandleCancelCongregation(const std::array<String, 6> &arguments) {
   MessageDebugf("DEBUG: -1, ID: %s, Congregación cancelada", robotID.c_str());
 }
 
-  // DISPERSE — dispersión de enjambre: repeler vecinos hasta separación >= mm
-  // DISPERSE|<mm>. Los vecinos llegan por NEIGHBOR_POSITIONS (1 Hz de la Base).
+  // DISPERSE|<mm> — dispersión del enjambre: repeler vecinos hasta una
+    // separación de al menos mm. Los vecinos llegan por NEIGHBOR_POSITIONS (1 Hz).
 void HandleDisperse(const std::array<String, 6> &arguments) {
   congregation.Reset();
   disperse.Reset();
@@ -651,16 +633,15 @@ void HandleDisperse(const std::array<String, 6> &arguments) {
   instructionList.clear();
   MessageDebugf("DEBUG: -1, ID: %s, dispersión: separación objetivo %.0fmm",
                 robotID.c_str(), disperse.target);
-  // Refrescar la pose antes del primer NEIGHBOR (así el settle/hop se decide
-  // sobre robotPose fresco, no sobre la última posición de otra conducta).
+  // Refrescar la pose antes del primer NEIGHBOR_POSITIONS, para decidir el salto
+    // sobre una pose fresca.
   fsmInstruction[0] = REQUEST_POSITION;
   fsmInstruction[1] = 0;
   instructionList.push_back(fsmInstruction);
 }
 
-  // NEIGHBOR_POSITIONS — posiciones de los demás robots (para dispersión)
-  // NEIGHBOR_POSITIONS|id,x,y;id,x,y;...  (la Base excluye o no al propio robot;
-  // aquí se filtra por id). Al llegar, se evalúa un salto de dispersión.
+  // NEIGHBOR_POSITIONS|id,x,y;id,x,y;... — posiciones de los demás robots. El
+    // propio robot se filtra por id. Al llegar, se evalúa un salto de dispersión.
 void HandleNeighborPositions(const std::array<String, 6> &arguments) {
   disperse.nCount = 0;
   String list = arguments[1];
@@ -703,8 +684,8 @@ void HandleClearEvasion(const std::array<String, 6> &arguments) {
                 robotID.c_str());
 }
 
-  // NAV_CONFIG — configura parámetros de navegación
-  // Uso: NAV_CONFIG|SEGMENT_DIST|250   NAV_CONFIG|ARRIVAL_THRESHOLD|20
+  // NAV_CONFIG — parámetros de navegación y de BDI-E, en vivo.
+    // Uso: NAV_CONFIG|SEGMENT_DIST|250   NAV_CONFIG|ARRIVAL_THRESHOLD|20
 void HandleNavConfig(const std::array<String, 6> &arguments) {
   if (arguments[1] == "SEGMENT_DIST") {
     float newDist = arguments[2].toFloat();
@@ -755,8 +736,8 @@ void HandleNavConfig(const std::array<String, 6> &arguments) {
       SendMessage(robots["Base"], buf);
     }
   } else if (arguments[1] == "SCAN") {
-    // Barrido al llegar a cada celda en BUSCAR (17-oct): 0 = no, 1 = sí,
-    // 10–180 = semiángulo en grados (180 = giro completo de 360°)
+    // Barrido al llegar a cada celda en BUSCAR: 0 = no, 1 = sí,
+        // 10–180 = semiángulo en grados (180 = giro completo de 360°)
     const int v = arguments[2].toInt();
     bdieScanEnabled = (v != 0);
     if (v >= 10 && v <= 180) bdieScanHalfDeg = (float)v;
@@ -767,10 +748,11 @@ void HandleNavConfig(const std::array<String, 6> &arguments) {
       snprintf(buf, sizeof(buf), "NAV_CONFIG: barrido=no");
     SendMessage(robots["Base"], buf);
   } else if (arguments[1] == "EVAP") {
-    // 24-oct: período de evaporación de la feromona, en ms (1000–60000). Por
-    // omisión 16000 desde el 07-nov (bdi.h; antes 4000). Con depósito 120 una huella dura ~59 aplicaciones:
-    // 4 s ≈ 4 min, 8 s ≈ 8 min, 12 s ≈ 12 min. Va por BROADCAST: cada robot
-    // evapora su réplica del mapa con su reloj y tienen que usar el mismo valor.
+    // Período de evaporación de la feromona, en ms (1000–60000); por omisión,
+        // 16000 (bdi.h). Con depósito 120 una huella dura unas 59 aplicaciones: con
+        // 4 s, unos 4 min; con 16 s, unos 16 min. Se envía por difusión: cada robot
+        // evapora su réplica del mapa con su propio reloj, y todos deben usar el
+        // mismo valor.
     long ms = arguments[2].toInt();
     if (ms >= 1000 && ms <= 60000) agent.evaporatePeriodMs = (uint32_t)ms;
     char buf[80];
@@ -779,22 +761,22 @@ void HandleNavConfig(const std::array<String, 6> &arguments) {
              (unsigned long)(agent.evaporatePeriodMs * 59UL / 1000UL));
     SendMessage(robots["Base"], buf);
   } else if (arguments[1] == "LAT") {
-    // 05-nov: ping robot↔robot para la latencia de OE3 (latencia.ino).
+    // Medición de latencia entre robots (latencia.ino).
     LatConfigurar(arguments[2].toInt());
   } else if (arguments[1] == "PASO") {
-    // 05-nov: negociación de paso entre robots (1, por omisión) o el protocolo
-    // del laboratorio, que siempre espera al robot que estorba (0).
+    // Negociación de paso entre robots (1, por omisión) o el protocolo del
+        // laboratorio, que siempre espera al robot que estorba (0).
     pasoNegociado = (arguments[2].toInt() != 0);
     SendMessage(robots["Base"], pasoNegociado ? "NAV_CONFIG: paso_negociado=si"
                                               : "NAV_CONFIG: paso_negociado=no");
   } else if (arguments[1] == "CAND_ROBOT") {
-    // 24-oct: en búsqueda, revisar el obstáculo central aunque un compañero diga
-    // «soy yo» (1, por omisión) o esperarlo como el laboratorio (0).
+    // En búsqueda, revisar el obstáculo central aunque un compañero diga «soy yo»
+        // (1, por omisión) o esperarlo como en el laboratorio (0).
     searchCandAunqueRobot = (arguments[2].toInt() != 0);
     SendMessage(robots["Base"], searchCandAunqueRobot ? "NAV_CONFIG: candidato_aunque_robot=si"
                                                       : "NAV_CONFIG: candidato_aunque_robot=no");
   } else if (arguments[1] == "WAIT_TURN" || arguments[1] == "WAIT_MOVE") {
-    // Pausas del paso de navegación, en ms (0..1000). 17-oct-2026.
+    // Pausas del paso de navegación, en ms (0..1000).
     long ms = arguments[2].toInt();
     if (ms >= 0 && ms <= 1000) {
       if (arguments[1] == "WAIT_TURN") navWaitAfterTurnMs = ms;
@@ -805,7 +787,7 @@ void HandleNavConfig(const std::array<String, 6> &arguments) {
       SendMessage(robots["Base"], buf);
     }
   } else if (arguments[1] == "ARENA") {
-    // Límites del escenario en curso (la base los manda al registrar).
+    // Límites del escenario en curso (la base los envía al registrar el robot).
     float w = arguments[2].toFloat();
     float h = arguments[3].toFloat();
     if (w > 100 && h > 100) {
@@ -834,8 +816,8 @@ void HandleNavConfig(const std::array<String, 6> &arguments) {
   }
 }
 
-  // SENSOR_MASK — ignora un sensor IR (diagnóstico de falsos positivos)
-  // Uso: SENSOR_MASK|L|1 (ignorar izquierdo)  SENSOR_MASK|L|0 (reactivar)
+  // SENSOR_MASK — ignora un sensor IR (diagnóstico de falsos positivos).
+    // Uso: SENSOR_MASK|L|1 (ignorar el izquierdo)  SENSOR_MASK|L|0 (reactivar)
 void HandleSensorMask(const std::array<String, 6> &arguments) {
   bool masked = (arguments[2].toInt() != 0);
   if      (arguments[1] == "L") maskLeftIR    = masked;
@@ -847,9 +829,9 @@ void HandleSensorMask(const std::array<String, 6> &arguments) {
   SendMessage(robots["Base"], buf);
 }
 
-  // SENSOR_THRESHOLD — umbral de proximidad del APDS9960 central (0..255)
-  // Uso: SENSOR_THRESHOLD|C|25        (solo en RAM, para tantear)
-  //      SENSOR_THRESHOLD|C|25|SAVE   (persiste en NVS, sobrevive apagón)
+  // SENSOR_THRESHOLD — umbral de proximidad del APDS9960 central (0..255).
+    // Uso: SENSOR_THRESHOLD|C|25        (solo en RAM, para probar)
+    //      SENSOR_THRESHOLD|C|25|SAVE   (lo guarda en NVS)
 void HandleSensorThreshold(const std::array<String, 6> &arguments) {
   if (arguments[1] == "C") {
     int newThr = arguments[2].toInt();
@@ -870,16 +852,16 @@ void HandleSensorThreshold(const std::array<String, 6> &arguments) {
 }
 
   // SELFTEST — diagnóstico de hardware rueda por rueda.
-  // Uso: SELFTEST            (PWM 40% por defecto)
-  //      SELFTEST|55         (fuerza otro % si el robot no arranca)
-  //
-  // Mueve CADA motor por separado y reporta pulsos de AMBOS encoders más el
-  // giro que midió la IMU. Con eso se separan las tres fallas que a simple
-  // vista se parecen:
-  //   motor muerto   → sus pulsos ≈0 Y la IMU no gira
-  //   encoder muerto → sus pulsos ≈0 PERO la IMU sí gira (el motor empuja)
-  //   motor flojo    → pulsos muy por debajo del otro lado
-  // El robot GIRA sobre su eje en cada paso: necesita ~30cm libres alrededor.
+    // Uso: SELFTEST            (PWM al 40 % por omisión)
+    //      SELFTEST|55         (otro porcentaje, si el robot no arranca)
+    //
+    // Mueve cada motor por separado y reporta los pulsos de ambos encoders más el
+    // giro que midió la IMU. Así se separan tres fallas que a simple vista se
+    // parecen:
+    //   motor muerto   → sus pulsos ≈ 0 y la IMU no gira
+    //   encoder muerto → sus pulsos ≈ 0 pero la IMU sí gira (el motor empuja)
+    //   motor flojo    → pulsos muy por debajo del otro lado
+    // El robot gira sobre su eje en cada paso: necesita unos 30 cm libres.
 void HandleSelftest(const std::array<String, 6> &arguments) {
   int pct = (arguments[1] != "") ? arguments[1].toInt() : 40;
   pct = constrain(pct, 15, 90);
@@ -904,9 +886,9 @@ void HandleSelftest(const std::array<String, 6> &arguments) {
     interrupts();
     float yaw0 = yaw;
 
-    // Fase 0 mueve solo la rueda izquierda, 1 solo la derecha y 2 las dos. El
-    // yaw se relee durante el tramo para mantenerlo fresco, y despues del corte
-    // se espera a que frene antes de medir.
+    // La fase 0 mueve solo la rueda izquierda, la 1 solo la derecha y la 2 las dos.
+        // La guiñada se relee durante el tramo para mantenerla fresca, y después del
+        // corte se espera a que el robot frene antes de medir.
     int lp = (fase == 1) ? 0 : pwm;
     int rp = (fase == 0) ? 0 : pwm;
     ConfigureHBridge(lp, rp);
@@ -938,7 +920,7 @@ void HandleSelftest(const std::array<String, 6> &arguments) {
   SendMessage(robots["Base"], "SELFTEST: fin");
 }
 
-  // EKF_NAV — conmuta la fuente de pose del control (0 = ArUco crudo, 1 = EKF)
+  // EKF_NAV — fuente de la pose para el control (0 = ArUco crudo, 1 = EKF)
 void HandleEKFNav(const std::array<String, 6> &arguments) {
   ekfNavEnabled = (arguments[1].toInt() != 0);
   char buf[80];
@@ -950,7 +932,7 @@ void HandleEKFNav(const std::array<String, 6> &arguments) {
 
   // GET_STATUS
 void HandleGetStatus(const std::array<String, 6> &arguments) {
-  char buffer[440];                       // BDI-E: era 300
+  char buffer[440];                       // BDI-E: búfer ampliado para los campos del agente
   snprintf(
       buffer, sizeof(buffer),
       "STATUS|ID:%s|State:%d|NAV:%d|Evading:%d|Obs:%d|"
@@ -969,18 +951,18 @@ void HandleGetStatus(const std::array<String, 6> &arguments) {
       yaw, (int)imuAvailable,
       ekf.x, ekf.y, ekf.AngleDeg(),
       pulsesPerRev, yawScale, (int)ekfNavEnabled,
-      (unsigned)ESP.getFreeHeap(),        // BDI-E (punto 9): R9 con un número
+      (unsigned)ESP.getFreeHeap(),        // BDI-E: memoria libre
       (unsigned long)loopPeriodUs,        // período real de loop()
       (unsigned long)deliberationUs,      // costo del ciclo BDI
-      agent.map.CoverageCells(),          // cobertura ACUMULADA, no feromona
+      agent.map.CoverageCells(),          // cobertura acumulada, no feromona
       (int)agent.bel.phase,
       agent.bel.myZone,
-      lateralCycle,                       // verifica el parche de la ranura
+      lateralCycle,                       // ranura IR derivada del ID
       (int)search.active);
   SendMessage(robots["Base"], buffer);
 }
 
-// RESET_EVASION — borra a mano todo el rastro de evasion. Escotilla de
+// RESET_EVASION — borra a mano todo el rastro de evasión. Recurso de
 // emergencia para cuando un robot queda trabado creyendo que sigue evadiendo.
 void HandleResetEvasion(const std::array<String, 6> &arguments) {
   evasionTracker.Reset();
@@ -993,9 +975,9 @@ void HandleResetEvasion(const std::array<String, 6> &arguments) {
       robotID.c_str());
 }
 
-  // SEARCH_OBJECT — búsqueda semántica por color (rojo/verde/azul)
-  // Patrulla con RANDOM_WALK, se aproxima a candidatos y les lee el color.
-  // Uso: SEARCH_OBJECT|rojo — ABORT_NAV la cancela. Prototipo validado en sim.
+  // SEARCH_OBJECT — búsqueda por color (rojo, verde o azul).
+    // Patrulla con RANDOM_WALK, se aproxima a los candidatos y les lee el color.
+    // Uso: SEARCH_OBJECT|rojo; ABORT_NAV la cancela.
 void HandleSearchObject(const std::array<String, 6> &arguments) {
   if (!frontSensorInitialized) {
     SendMessage(robots["Base"], "SEARCH: APDS9960 no disponible");
@@ -1015,14 +997,14 @@ void HandleSearchObject(const std::array<String, 6> &arguments) {
                 robotID.c_str(), search.targetColor);
 }
 
-  // COLOR_READ — lectura puntual RGBC para calibrar umbrales de color en lab.
-  // Uso: COLOR_READ                (con la exposicion vigente)
-  //      COLOR_READ|16             (fija la ganancia)
-  //      COLOR_READ|16|100         (fija ganancia e integracion en ms)
-  //
-  // La exposicion queda fija hasta el proximo COLOR_READ que la cambie o hasta
-  // reiniciar: asi se barre desde la consola sin recompilar, y la respuesta la
-  // repite para que el log diga con que se midio cada lectura.
+  // COLOR_READ — lectura puntual RGBC para calibrar los umbrales de color.
+    // Uso: COLOR_READ                (con la exposición vigente)
+    //      COLOR_READ|16             (fija la ganancia)
+    //      COLOR_READ|16|100         (fija ganancia e integración en ms)
+    //
+    // La exposición queda fija hasta el próximo COLOR_READ que la cambie o hasta
+    // reiniciar, y la respuesta la repite para que el registro diga con qué se
+    // midió cada lectura.
 void HandleColorRead(const std::array<String, 6> &arguments) {
   if (!frontSensorInitialized) {
     SendMessage(robots["Base"], "COLOR_READ: APDS9960 no disponible");
@@ -1035,9 +1017,9 @@ void HandleColorRead(const std::array<String, 6> &arguments) {
   }
   uint16_t r, g, b, c;
   ReadColorRaw(r, g, b, c);
-  // Se informan tambien los canales NORMALIZADOS, que son los que mira
-  // MatchColor: sobre el patron con el que se calibro tienen que dar 1.00 en
-  // los tres, y eso hace verificable de un vistazo que COLOR_WB quedo bien.
+  // Se informan también los canales normalizados, que son los que usa
+    // MatchColor: sobre el patrón con que se calibró deben dar 1,00 en los tres,
+    // lo que permite verificar de un vistazo que COLOR_WB quedó bien.
   char norm[40] = "";
   if (colorWbR && colorWbG && colorWbB) {
     snprintf(norm, sizeof(norm), " norm=%.2f/%.2f/%.2f", (float)r / colorWbR,
@@ -1050,15 +1032,14 @@ void HandleColorRead(const std::array<String, 6> &arguments) {
 }
 
   // COLOR_WB — balance de blancos del sensor de color, propio de cada robot.
-  // Uso: COLOR_WB           mide lo que tiene enfrente y lo toma de patron
-  //      COLOR_WB|R|G|B     lo fija a mano
-  //      COLOR_WB|RESET     vuelve a comparar canales crudos
-  //
-  // El patron es el obstaculo beige de la arena. Hay que medirlo A LA MISMA
-  // DISTANCIA a la que el robot lee de verdad (readProximity() >=
-  // SEARCH_PROX_NEAR) y con la luz de la arena: lo que se guarda es la respuesta
-  // conjunta del sensor Y de la iluminacion, y eso solo vale si las condiciones
-  // son las de la prueba.
+    // Uso: COLOR_WB           mide lo que tiene enfrente y lo toma como patrón
+    //      COLOR_WB|R|G|B     lo fija a mano
+    //      COLOR_WB|RESET     vuelve a comparar canales crudos
+    //
+    // El patrón es el obstáculo beige de la arena. Hay que medirlo a la misma
+    // distancia a la que el robot lee de verdad (readProximity() >=
+    // SEARCH_PROX_NEAR) y con la luz de la arena: lo que se guarda es la
+    // respuesta conjunta del sensor y de la iluminación.
 void HandleColorWhiteBalance(const std::array<String, 6> &arguments) {
   if (arguments[1] == "RESET") {
     SaveColorWhiteBalance(0, 0, 0);
@@ -1079,8 +1060,8 @@ void HandleColorWhiteBalance(const std::array<String, 6> &arguments) {
     ReadColorRaw(r, g, b, c);
   }
 
-  // Un patron mal medido es peor que no calibrar: queda guardado en NVS y
-  // deforma TODAS las clasificaciones posteriores sin avisar.
+  // Un patrón mal medido es peor que no calibrar: queda guardado en NVS y
+    // deforma todas las clasificaciones posteriores sin avisar.
   char buf[120];
   if (r == 0 || g == 0 || b == 0) {
     snprintf(buf, sizeof(buf),
@@ -1114,16 +1095,16 @@ void HandleColorWhiteBalance(const std::array<String, 6> &arguments) {
   SendMessage(robots["Base"], buf);
 }
 
-// ABORT_NAV — corta cualquier navegacion o busqueda en curso y deja el robot
+// ABORT_NAV — corta cualquier navegación o búsqueda en curso y deja el robot
 // quieto.
 void HandleAbortNav(const std::array<String, 6> &arguments) {
   nav.Reset();
   if (search.active && frontSensorInitialized) frontSensor.enableColor(false);
   search.Reset();
   instructionList.clear();
-  // Si se aborto a mitad de un giro, el seguimiento por IMU no puede quedar
-  // activo: el proximo TURN tiene que reinicializar yaw de arranque, acumulado y
-  // objetivo desde cero.
+  // Si se abortó a mitad de un giro, el seguimiento por IMU no puede quedar
+    // activo: el próximo TURN debe reinicializar desde cero la guiñada inicial, el
+    // acumulado y el objetivo.
   imuTurnActive       = false;
   imuTurnIsCorrection = false;
   imuTurnCorrCount    = 0;
@@ -1133,8 +1114,8 @@ void HandleAbortNav(const std::array<String, 6> &arguments) {
                 robotID.c_str());
 }
 
-  // GET_YAW — retorna el yaw actual de la IMU para validación en Fase 2
-  // Uso desde la base: BASE.GET_YAW → responde YAW|<valor>|<imuAvailable>
+  // GET_YAW — devuelve la guiñada actual de la IMU.
+    // Uso desde la base: BASE.GET_YAW → responde YAW|<valor>|<imuAvailable>
 void HandleGetYaw(const std::array<String, 6> &arguments) {
   char buffer[60];
   snprintf(buffer, sizeof(buffer), "YAW|%.2f|%d|%.3f",
@@ -1143,7 +1124,7 @@ void HandleGetYaw(const std::array<String, 6> &arguments) {
 }
 
 // Punto de entrada del protocolo: lee un datagrama, lo parte en comando y
-// argumentos, y despacha al handler que corresponda.
+// argumentos, y lo despacha al manejador que corresponda.
 void ReadUdpPackets() {
   int packetBytes = udp.parsePacket();
   if (!packetBytes) {
@@ -1197,13 +1178,13 @@ void ReadUdpPackets() {
   else if (command == "COLOR_WB") HandleColorWhiteBalance(arguments);
   else if (command == "ABORT_NAV") HandleAbortNav(arguments);
   else if (command == "GET_YAW") HandleGetYaw(arguments);
-  // BDI-E (punto 5): una sola puerta de entrada, la MISMA que usa el banco.
-  // ZC/ZA (14-oct-2026): el reparto de franjas acordado por mensajes.
+  // BDI-E: una sola puerta de entrada para los mensajes del enjambre, la misma
+    // que usa el banco. ZC/ZA son el reparto de franjas por mensajes.
   else if (command == "POSES" || command == "SESSION" || command == "HB" ||
            command == "TGT"   || command == "TGT_REQ" ||
            command == "ZC"    || command == "ZA")
     HandleBdieMessage();
-  else if (command == "LAT_PING") HandleLatPing(arguments);   // OE3, latencia.ino
+  else if (command == "LAT_PING") HandleLatPing(arguments);   // latencia.ino
   else if (command == "LAT_PONG") HandleLatPong(arguments);
   else if (command == "TARGET_COLOR") HandleTargetColor(arguments);
   else if (command == "BDIE_TELEM") HandleBdieTelem(arguments);

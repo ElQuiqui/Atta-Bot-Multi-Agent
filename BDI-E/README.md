@@ -42,7 +42,7 @@ commit `82b9b8b` (13-ago-2026). Es la versión con siete `.ino` por tema y la gr
 | `robot/AttaBot/` | **El sketch completo para el robot.** Es el firmware del laboratorio con enganches de una línea marcados `BDI-E`, más `bdie.ino` (todo el acople), `latencia.ino` (medición de latencia entre robots) y copias de los seis encabezados de `firmware/`. |
 | `base/` | La base del laboratorio con los enganches de BDI-E. Ver el detalle abajo. |
 | `base/herramientas/` | Análisis de las corridas, en `analisis_corrida.py`, `resumen_campana.py` y `medidas_hw_07nov.py`. También el sorteo de la campaña, la verificación de una sesión (`verificar_bdie.py`) y el diagnóstico de ArUco. |
-| `sitl/` | Banco de simulación con el software en el lazo. `bdie_bridge.cpp` compila **el mismo C++ que corre en el robot** y `bdie_sim.py` lo usa vía `ctypes`. `lab_cong.cpp` y `extraer_lab.py` compilan la congregación del laboratorio tal como está en el sketch. |
+| `sitl/` | Banco de simulación *software-in-the-loop* (SITL). `bdie_bridge.cpp` compila **el mismo C++ que corre en el robot** y `bdie_sim.py` lo usa vía `ctypes`. `lab_cong.cpp` y `extraer_lab.py` compilan la congregación del laboratorio tal como está en el sketch. |
 | `pruebas_host/` | El sketch compilado en la PC contra *stubs* de hardware, junto con sus pruebas. Ver el detalle abajo. |
 | `Makefile.mk` | Recetas para el banco y las pruebas. |
 

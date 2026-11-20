@@ -1,3 +1,12 @@
+"""Genera los prototipos que el IDE de Arduino crearía automáticamente.
+
+Recorre AttaBot.ino y después los demás .ino en orden alfabético, igual que el
+preprocesador de Arduino, y escribe una declaración por cada función definida
+en el nivel superior. Lo usa pruebas_host/build.sh para compilar el sketch en
+la PC.
+
+    python3 protos.py <carpeta del sketch> <archivo de salida>
+"""
 import re, sys, os
 S = sys.argv[1]
 files = ["AttaBot.ino"] + sorted(f for f in os.listdir(S) if f.endswith(".ino") and f != "AttaBot.ino")

@@ -15,7 +15,7 @@ from datetime import datetime
 # BDI-E · B0 — la base como servicio de localización (ver swarm_broadcast.py)
 from swarm_broadcast import SwarmBroadcaster, MissionObserver
 from bdie_monitor import BdieMonitor   # BDI-E · B5 — qué piensa cada robot
-from cubo_vision import CuboDetector   # 24-oct: verdad de terreno del objeto (NO va a los robots)
+from cubo_vision import CuboDetector   # verdad de terreno del objetivo (no se envía a los robots)
 
 # GUI opcional — se usa cuando se llama vía AttaBot_GUI.launch()
 _gui_instance = None
@@ -71,10 +71,9 @@ _NO_LOG_CMD = frozenset(('POSE', 'POSITION_RESPONSE', 'LEADER_POSITION',
 # =============================================================================
 # VOCABULARIO DE COMANDOS
 # =============================================================================
-# Fuente ÚNICA para el despachador, el autocompletado y la ayuda. Antes cada
-# cara tenía su propia lista y se desincronizaban: la GUI entendía BROADCAST,
-# CONGREGATION, GOTO y STATUS pero no FORMATION, CALIBRATE ni OCCLUDE durante
-# meses. Agregar un comando acá lo hace aparecer en los tres lugares a la vez.
+# Fuente única para el despachador, el autocompletado y la ayuda: agregar un
+# comando aquí lo hace aparecer en los tres lugares a la vez, y la consola y la
+# GUI no se desincronizan.
 #
 # Gramática:  DESTINO.VERBO|arg|arg
 #   BASE.<verbo>       la Base ejecuta algo (orquesta, consulta, calibra)
@@ -141,7 +140,7 @@ _ROBOT_CMDS = {
     'TARGET_COLOR':     'rojo|verde|azul',
     # BDI-E: telemetría a la base. 0 apagada, 1 solo THINK, 2 THINK + mapas.
     'BDIE_TELEM':       '0|1|2',
-    # BDI-E (prueba, 14-oct-2026): canal del enjambre «caído» durante s segundos.
+    # BDI-E (prueba): canal del enjambre «caído» durante s segundos.
     'BDIE_SILENCIO':    'segundos',
 }
 
@@ -151,9 +150,6 @@ _BASE_CMDS = {
     'CALIBRATE':    'robotID',
     'CONGREGATION': 'liderID[|espaciado_mm]',
     'FORMATION':    'linea|cuna|circulo|liderID[|espaciado_mm]',
-    # GOTO salió el 2026-08-05: 'BASE.GOTO|1|1200|850' era exactamente
-    # '1.GT|1200|850' más un print, y con el campo de comandos aceptando destino
-    # explícito ya no aportaba nada.
     'OCCLUDE':      'segundos   (solo --sim)',
     # BDI-E · B3: la ÚNICA orden de la misión. Ver handleSession().
     'SESSION':      'START|x_mm|y_mm[|color]  o  ABORT  o  STATE  o  JOIN|id',
@@ -602,12 +598,11 @@ class Base(object):
         self.simConfig = {}               # sección 'simulation' del JSON
         self.scenarioConfig = {}          # sección 'scenario' del JSON (arena física)
         # Cuánto esperar una detección ArUco buena antes de dejar sin responder un
-        # REQUEST_POSITION. El ArUco titila por posición y el timeout del firmware
-        # es de 5s, así que rendirse en el primer frame malo sale carísimo.
-        # BDI-E V2: 1.2 s y no 0.5. El robot pregunta DETENIDO, así que una
-        # detección que llega tarde sigue siendo válida; y a 20 FPS son ~24
-        # oportunidades en vez de 10. Queda por debajo del timeout del firmware
-        # (requestTimeout = 1500 ms en utils.h), que después cae al EKF.
+                # REQUEST_POSITION. El ArUco titila según la posición del robot y el
+                # firmware espera hasta 1500 ms (requestTimeout en utils.h) antes de
+                # pasar al EKF, así que rendirse en el primer cuadro malo cuesta caro. El
+                # robot pregunta detenido, de modo que una detección que llega tarde
+                # sigue siendo válida; a 20 FPS, 1,2 s son unas 24 oportunidades.
         self.poseWaitTimeout = 1.2        # s
         self.logTag = ''                  # 'SIM_' en los nombres de log de sim
         # --- Enjambre: broadcast periódico de posiciones (dispersión/flocking) ---
@@ -618,8 +613,8 @@ class Base(object):
         self.observer = MissionObserver(log=self.log)   # pasivo: HB y TGT
         # --- BDI-E · B5 --- telemetría THINK/BMAP: GUI, logs y verificaciones
         self.bdie = BdieMonitor(carpeta='BdieLogs', log=self.log)
-        # --- 24-oct · el cubo visto por la cámara: SOLO para el log y el mapa ---
-        # (objetivo_real). Los robots no lo reciben: la detección es de ellos.
+        # --- El objetivo visto por la cámara: solo para el registro y el mapa
+                # (objetivo_real). Los robots no lo reciben: la detección es de ellos.
         self.cubo = CuboDetector()
         self._cuboTick = 0
         self._cuboLogueado = None
@@ -630,18 +625,17 @@ class Base(object):
 
     def arenaMm(self):
         """
-        Arena FÍSICA del escenario en curso, en mm: (ancho, alto).
+                Arena física del escenario en curso, en mm: (ancho, alto).
 
-        Es dónde el robot PUEDE ESTAR, y no debe confundirse con el recorte que
-        ve la cámara (cameraFovMm), que es dónde la base puede MEDIRLO. El FOV
-        suele ser más chico: con la C920 a 1280px y 39/23 mm/px son 2170x1221mm
-        contra una arena de 2400x1750. Mientras la arena la definía el FOV, un
-        destino perfectamente alcanzable como 2200|850 lo rechazaba el firmware
-        con 'GT objetivo fuera de la arena' (2026-07-29).
+                Es dónde el robot puede estar, y no debe confundirse con el recorte que
+                ve la cámara (cameraFovMm), que es dónde la base puede medirlo. El campo
+                de visión suele ser más chico (con la C920 a 1280 px, unos
+                2170 × 1221 mm contra una arena de 2400 × 1750), y si la arena se tomara
+                del campo de visión el firmware rechazaría destinos alcanzables.
 
-        Sale de la sección 'scenario': 'presets' por cantidad de robots si hay
-        uno para este N, si no 'arena_mm'.
-        """
+                Sale de la sección 'scenario': 'presets' por cantidad de robots si hay
+                uno para este N; si no, 'arena_mm'.
+                """
         sc = self.scenarioConfig
         presets = sc.get('presets', {})
         preset = presets.get(str(self.numRobots))
@@ -720,9 +714,9 @@ class Base(object):
         return (sorted(xs)[1], sorted(ys)[1], angMed)
 
 
-    RETENCION_S = 1.0       # V2: cuánto se sigue difundiendo la última pose de un robot que titila
+    RETENCION_S = 1.0       # cuánto se sigue difundiendo la última pose de un robot que titila
 
-    # ── BDI-E V2 · recuperación de markers perdidos ─────────────────────────
+    # ── BDI-E · recuperación de marcadores perdidos ─────────────────────────
     ROI_MEMORIA_S = 1.0     # hasta cuánto después de perderlo se lo busca
     ROI_LADO_PX   = 180     # recorte alrededor de la última posición
     ROI_ESCALA    = 2.0     # ampliación del recorte: un marker de ~35 px pasa a ~70
@@ -840,9 +834,9 @@ class Base(object):
         # Detección a resolución completa: a 2.5m de altura el marker de 80mm ocupa
         # solo ~47px — a media resolución baja a ~24px (3.9px/celda), límite de fallo.
         corners, ids, _ = self.arucoDetector.detectMarkers(gray)
-        # BDI-E V2 · segunda pasada: los robots que se vieron hace poco y en ESTE
-        # cuadro no, se buscan de nuevo en un recorte alrededor de donde estaban,
-        # ampliado y con contraste local (ver _recuperarPorROI).
+        # BDI-E · segunda pasada: los robots que se vieron hace poco y en este
+                # cuadro no se buscan de nuevo en un recorte alrededor de donde estaban,
+                # ampliado y con contraste local (ver _recuperarPorROI).
         corners, ids = self._recuperarPorROI(gray, corners, ids)
         # detectMarkers cuesta 18ms de los 50 que dura la ventana de procesamiento,
         # y drawArucoDebug lo repetía sobre este mismo frame — con debug_enable en
@@ -942,9 +936,9 @@ class Base(object):
         """
         corners, ids = self._lastCorners, self._lastIds
 
-        # V2: trazo grueso y texto con contorno. La GUI muestra el cuadro de
-        # 1280 px reducido a ~700: con las líneas de 1 px de drawDetectedMarkers
-        # y letra de 0.45 el recuadro y la pose desaparecían al escalar.
+        # Trazo grueso y texto con contorno: la GUI muestra el cuadro de 1280 px
+                # reducido a unos 700, y con líneas de 1 px y letra de 0,45 el recuadro y
+                # la pose desaparecerían al escalar.
         def _texto(img, txt, org, color):
             cv2.putText(img, txt, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4, cv2.LINE_AA)
             cv2.putText(img, txt, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
@@ -986,9 +980,9 @@ class Base(object):
                         _texto(frame, f'({x_mm:.0f},{y_mm:.0f}) {ang:.0f}deg',
                                (cx - 75, cy - int(lado / 2) - 10), (0, 255, 100))
 
-        # V2 · lo que la GUI necesita ver del titileo:
-        #   naranja = recuperado por la segunda pasada (ROI) en este cuadro
-        #   rojo    = robot registrado que NO se ve, en su última posición
+        # Lo que la GUI necesita ver del titileo:
+                #   naranja = recuperado por la segunda pasada (ROI) en este cuadro
+                #   rojo    = robot registrado que no se ve, en su última posición
         import time as _t
         rec = getattr(self, '_recuperadosCuadro', set())
         if ids is not None and rec:
@@ -1046,14 +1040,11 @@ class Base(object):
 
     def processFoundRobots(self, foundRobots):
         """
-        Crea instancias de Robot para cada robot encontrado y los ordena por ID.
+                Crea una instancia de Robot para cada robot encontrado y los ordena por ID.
 
-        Versión simplificada para ArUco: ya no necesita eliminar colores no usados
-        porque no existe el diccionario frameColors.
-
-        Parámetros:
-        - foundRobots (set): IDs de robots detectados visualmente.
-        """
+                Parámetros:
+                - foundRobots (set): IDs de robots detectados visualmente.
+                """
         self.robots = {robot: Robot(robot, self.robotsConfig) for robot in sorted(foundRobots, key=int)}
         if self.gui is not None:
             self.gui.refreshRobots()
@@ -1132,11 +1123,9 @@ class Base(object):
             snapshot = getattr(self, '_setupAngleSnapshot', {})
             refAngle = snapshot.get(robot.id)
 
-            # Inicialización tardía: si el robot no era visible cuando se tomó el
-            # snapshot, se quedaba con ref=None PARA SIEMPRE en este intento y el
-            # desplazamiento nunca podía calcularse (visto 2026-07-27: el robot
-            # giró 87° y el giro se descartó por esto). Al primer frame en que
-            # aparezca, se ancla la referencia.
+            # Inicialización tardía: si el robot no era visible cuando se tomó la
+                        # referencia, se ancla al primer cuadro en que aparezca; si no, el
+                        # desplazamiento nunca podría calcularse.
             if refAngle is None and pose != (-1, -1, -1):
                 snapshot[robot.id] = pose[2]
                 self._setupAngleSnapshot = snapshot
@@ -1420,12 +1409,12 @@ class Base(object):
         self.cameraMatriz = np.loadtxt(configuration['path_cameraMatrix'], dtype=float)
         self.distance = np.loadtxt(configuration['path_distance'], dtype=float)
 
-        # Ángulo desde las ARISTAS del marker en vez del rvec de solvePnP.
-        # IPPE_SQUARE tiene dos soluciones casi empatadas con cámara cenital y
-        # marker plano (ambigüedad de flip); el desempate parpadea y eso explica
-        # la σ=3.8° medida el 2026-07-27 con el robot QUIETO (el jitter de
-        # esquinas solo daría ~0.5°). La dirección de la arista superior es el
-        # mismo ángulo, sin pasar por PnP. Apagable por config para A/B en lab.
+        # Ángulo desde las aristas del marcador en vez del rvec de solvePnP.
+                # IPPE_SQUARE tiene dos soluciones casi empatadas con cámara cenital y
+                # marcador plano (ambigüedad de volteo); el desempate parpadea y produce
+                # un ruido de unos 3,8° con el robot quieto, cuando el ruido de las
+                # esquinas solo daría ~0,5°. La dirección de la arista superior es el
+                # mismo ángulo sin pasar por PnP. Se puede apagar por configuración.
         self.angleFromCorners = bool(configuration.get('angle_from_corners', True))
         # Mediana-de-3 por marker: mata misreads de UN frame (saltos de ~500mm
         # vistos hoy) antes de que lleguen a robots y logs. Con cambio real
@@ -1476,19 +1465,16 @@ class Base(object):
         # A 2.5m de altura los markers de 80mm miden ~47px a resolución completa.
         # WinSize: ventana adaptativa relativa al tamaño del marker — mín 3, máx ~marker/2
         arucoParams.adaptiveThreshWinSizeMin = 3
-        arucoParams.adaptiveThreshWinSizeMax = 23    # ~marker/2; antes era 53 (para media-res)
+        arucoParams.adaptiveThreshWinSizeMax = 23    # ~ la mitad del marcador en píxeles
         arucoParams.adaptiveThreshWinSizeStep = 4
         arucoParams.adaptiveThreshConstant = 7       # default; con full-res hay más señal
         arucoParams.minMarkerPerimeterRate = 0.02    # 47px perím. / 1280px ancho ≈ 0.037 — margen
         arucoParams.maxMarkerPerimeterRate = 4.0
         arucoParams.polygonalApproxAccuracyRate = 0.05
         arucoParams.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        # 1.0 = usar TODA la capacidad de corrección del diccionario. Con los
-        # markers de 90mm los robots miden ~40px (10% menos que con los de
-        # 100mm) y a ese tamaño 0.9 los descartaba: medido 2026-07-28, con 0.9
-        # solo aparecía el marker fijo del piso; con 1.0 aparecen los tres.
-        # Ablación: es el ÚNICO parámetro que los recupera (winSizeMax=53 trae
-        # uno solo; pixelPerCell=4 rompe la detección entera).
+        # 0,9 de la capacidad de corrección del diccionario. Con marcadores pequeños
+                # (~40 px) es el parámetro que decide si se detectan; ajustarlo junto con
+                # adaptiveThreshWinSizeMax y perspectiveRemovePixelPerCell.
         arucoParams.errorCorrectionRate = 0.9
         arucoParams.perspectiveRemovePixelPerCell = 8
         # Guarda contra falsos positivos: al relajar la detección aparecieron
@@ -1593,11 +1579,10 @@ class Base(object):
         width, height = map(int, configuration['camera_resolution'].split('x'))
         self.cameraResolution = (height, width)
 
-        # Buffer de 2 y no de 1: decodificar el MJPEG cuesta ~20ms y con un solo
-        # buffer el driver no tenía dónde poner el cuadro que llegaba mientras
-        # tanto, así que lo tiraba. Medido 2026-08-05 en bucle apretado: con
-        # buffer=1 read() da 62.7ms (15.9 FPS), con buffer=2 da 32.3ms (30.9).
-        # Sigue siendo chico a propósito, para no acumular cuadros viejos.
+        # Búfer de 2 y no de 1: decodificar el MJPEG cuesta ~20 ms y con un solo
+                # búfer el driver descarta el cuadro que llega mientras tanto (con 1 se
+                # obtienen unos 16 FPS; con 2, unos 31). Sigue siendo pequeño a propósito,
+                # para no acumular cuadros viejos.
         self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 2)
         # MJPEG permite 1080p @ 30 FPS por USB; sin esto V4L2 usa YUYV (~5 FPS)
         self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
@@ -1609,22 +1594,22 @@ class Base(object):
         # compuerta (45ms) y se procesa CADA cuadro que llega. La C920 soporta
         # 20.000 fps exactos a 1280x720 MJPG.
         self.camera.set(cv2.CAP_PROP_FPS, 20)
-        # Óptica FIJA. Los tres automáticos de la C920 sabotean el ArUco y
-        # ninguno sobrevive a desconectar el USB, así que se fijan en cada
-        # arranque (medido 2026-07-28 con markers de bajo contraste):
-        #  - autofocus: cazaba y desenfocaba → nitidez 88 (borroso). Con foco
-        #    fijo al infinito da 100; a partir de focus=30 se derrumba a 48 y
-        #    en 40 ya no detecta nada. Es el ajuste que más pesa.
-        #  - exposición: en 77 el blanco marcaba 151/255 y el umbral adaptativo
-        #    quedaba sin margen; en 250 el blanco llega a 205 sin saturar.
-        #    Subirla más es un espejismo: en 600 el 89% de la imagen revienta.
-        #  - balance de blancos: si deriva, cambia el punto de corte del umbral.
+        # Óptica fija. Los tres automáticos de la C920 perjudican al ArUco y
+                # ninguno sobrevive a desconectar el USB, así que se fijan en cada
+                # arranque:
+                #  - autoenfoque: busca y desenfoca; con foco fijo al infinito la nitidez
+                #    es la mejor, y a partir de focus=30 se derrumba. Es el ajuste que
+                #    más pesa.
+                #  - exposición: con 77 el blanco queda en 151/255 y el umbral adaptativo
+                #    sin margen; con 250 llega a 205 sin saturar. Más alta satura la
+                #    imagen.
+                #  - balance de blancos: si deriva, cambia el punto de corte del umbral.
         cam = configuration.get('camera_controls', {})
-        # BDI-E V2 · WINDOWS: la exposición NO está en las mismas unidades. En
-        # V4L2 (Linux) es exposure_absolute en pasos de 100 µs (250 = 25 ms); en
-        # DirectShow es log2 de los segundos (-5 ≈ 31 ms). Pasarle 250 a
-        # DirectShow pide una exposición absurda y la imagen sale quemada.
-        # Además el "manual" de AUTO_EXPOSURE es 1 en V4L2 y 0.25 en DirectShow.
+        # BDI-E · Windows: la exposición no está en las mismas unidades. En V4L2
+                # (Linux) es exposure_absolute en pasos de 100 µs (250 = 25 ms); en
+                # DirectShow es log2 de los segundos (-5 ≈ 31 ms). Pasarle 250 a
+                # DirectShow pide una exposición absurda y la imagen sale quemada.
+                # Además, el «manual» de AUTO_EXPOSURE es 1 en V4L2 y 0,25 en DirectShow.
         self._expo = self._exposicionBackend(cam, backend)
         self.camera.set(cv2.CAP_PROP_AUTOFOCUS, 0)
         self.camera.set(cv2.CAP_PROP_FOCUS, float(cam.get('focus', 0)))
@@ -1661,12 +1646,10 @@ class Base(object):
             self.camera.read()
         print(' listo')
 
-        # RE-APLICAR la exposición: al arrancar el streaming el driver la pisa
-        # (medido 2026-07-28: se fijaba en 250 y tras 30 frames quedaba en 38,
-        # con el blanco del papel en 106/255). Todas las sesiones anteriores
-        # corrieron subexpuestas por esto, y como el contraste bajo también baja
-        # la varianza del Laplaciano, parecía además un problema de foco.
-        # Re-aplicarla acá deja el blanco en ~200 y la nitidez en ~194.
+        # Volver a aplicar la exposición: al arrancar la transmisión el driver la
+                # sobrescribe (se fija en 250 y tras unos 30 cuadros queda en 38, con la
+                # imagen subexpuesta y aparentemente desenfocada). Aplicarla aquí deja el
+                # blanco en ~200.
         self.camera.set(cv2.CAP_PROP_EXPOSURE, self._expo)
         for _ in range(10):
             self.camera.read()
@@ -1710,18 +1693,15 @@ class Base(object):
 
     def processFrame(self, frame):
         """
-        Procesa un frame de la cámara: corrige distorsión, detecta markers ArUco
-        y actualiza currentArucoDetections.
+                Procesa un cuadro de la cámara: corrige la distorsión, detecta los
+                marcadores ArUco y actualiza currentArucoDetections.
 
-        Reemplaza processFrameColors. Ya no se procesan colores HSV ni se lanzan
-        hilos por color — la detección ArUco opera sobre el frame BGR completo.
+                Parámetros:
+                - frame (ndarray): cuadro BGR crudo de la cámara.
 
-        Parámetros:
-        - frame (ndarray): Frame BGR crudo de la cámara.
-
-        Retorna:
-        - frame (ndarray): Frame corregido por distorsión en BGR.
-        """
+                Retorna:
+                - frame (ndarray): cuadro corregido por distorsión, en BGR.
+                """
         if self.simMode:
             # Las detecciones vienen del feed CAM (ya en mm/grados del lab)
             raw = self.simVision.snapshot()
@@ -1745,11 +1725,11 @@ class Base(object):
 
 
     def _procesarCubo(self, frame, raw):
-        """24-oct-2026. Dónde está el objeto de verdad, visto por la cámara.
-        Aprende px→mm de los propios robots (mismo marco que POSES) y cada 4
-        cuadros busca el cubo del color de la sesión. Cuando lo confirma (o se
-        mueve > 30 mm) lo registra como objetivo_real en el log de la sesión y
-        el panel lo dibuja. Ver cubo_vision.py."""
+        """Dónde está el objetivo según la cámara. Aprende px→mm de los propios
+                robots (el mismo marco que POSES) y cada 4 cuadros busca el cubo del
+                color de la sesión. Cuando lo confirma (o se mueve más de 30 mm) lo
+                registra como objetivo_real en el registro de la sesión y el panel lo
+                dibuja. Ver cubo_vision.py."""
         self._cuboTick += 1
         corners, ids = getattr(self, '_lastCorners', None), getattr(self, '_lastIds', None)
         centros = []
@@ -2009,11 +1989,11 @@ class Base(object):
                 continue
             poses[rid] = pose
             self._retenida[rid] = (pose, ahora)
-        # V2 · RETENCIÓN: un titileo del ArUco no puede sacar al robot del
-        # broadcast. Si falta, se difunde su última pose hasta RETENCION_S. Sin
-        # esto, una pérdida de más de staleEpochs (30 paquetes ≈ 1,5 s a 20 Hz)
-        # lo da por CAÍDO en todos los pares y fuerza una reasignación de zonas
-        # —y otra cuando reaparece—. Con la retención, la tolerancia sube a ~2,5 s.
+        # Retención: un titileo del ArUco no debe sacar al robot de la difusión. Si
+                # falta, se difunde su última pose hasta RETENCION_S. Sin esto, una
+                # pérdida de más de staleEpochs (30 paquetes ≈ 1,5 s a 20 Hz) lo daría por
+                # caído en todos los robots y forzaría un nuevo reparto de zonas, y otro
+                # cuando reapareciera. Con la retención, la tolerancia sube a ~2,5 s.
         for rid, (pose, t) in self._retenida.items():
             if rid not in poses and ahora - t <= self.RETENCION_S:
                 poses[rid] = pose
@@ -2032,27 +2012,26 @@ class Base(object):
 
     def handleSession(self, instruction):
         """
-        BDI-E · B3 — comandos de sesión, compartidos por la consola y la GUI
-        (las dos pasan por dispatch → _dispatchBase).
+                BDI-E · comandos de sesión, compartidos por la consola y la GUI (las dos
+                pasan por dispatch → _dispatchBase).
 
-            BASE.SESSION|START|x|y[|color]  inicia la misión; (x, y) = la base en
-                                     mm, en el marco del ArUco de referencia;
-                                     color = rojo|verde|azul (se manda antes)
-            BASE.SESSION|ABORT       aborta la corrida en todos los robots
-            BASE.SESSION|STATE       fases de cada robot según los latidos (HB)
-            BASE.SESSION|JOIN|id     (14-oct-2026) reincorpora a la misión EN
-                                     CURSO a un robot que se reinició: le manda
-                                     el mismo SESSION|START, pero SOLO a él
-                                     (unicast). Antes hay que reenviarle CONFIG
-                                     como siempre. No asigna nada: el robot
-                                     empieza a latir, los demás lo oyen y se
-                                     re-reparten las franjas entre ellos.
+                    BASE.SESSION|START|x|y[|color]  inicia la misión; (x, y) = la base en
+                                             mm, en el marco del ArUco de referencia;
+                                             color = rojo|verde|azul (se envía antes)
+                    BASE.SESSION|ABORT       aborta la corrida en todos los robots
+                    BASE.SESSION|STATE       fases de cada robot según los latidos (HB)
+                    BASE.SESSION|JOIN|id     reincorpora a la misión en curso a un robot
+                                             que se reinició: le envía el mismo
+                                             SESSION|START, solo a él (unicast). Antes
+                                             hay que reenviarle CONFIG. No asigna nada:
+                                             el robot empieza a latir, los demás lo oyen
+                                             y se reparten de nuevo las franjas.
 
-        Acepta también la forma con espacios ('START 1250 1000'). La posición de
-        la base se pide explícita a propósito: un valor por defecto de (0, 0) es
-        el marcador de referencia, en la esquina, y el retorno conjunto iría a
-        la esquina sin que nada lo señale como error.
-        """
+                Acepta también la forma con espacios ('START 1250 1000'). La posición de
+                la base se pide explícita a propósito: un valor por defecto de (0, 0)
+                sería el marcador de referencia, en la esquina, y el retorno conjunto
+                iría a la esquina sin que nada lo señale como error.
+                """
         if self.swarm is None:
             self.log('[Sesión] El socket UDP aún no está configurado.')
             return
@@ -2067,9 +2046,9 @@ class Base(object):
             except ValueError:
                 self.log('SESSION START: x e y deben ser números en mm')
                 return
-            # Color objetivo (12-oct-2026): se manda ANTES del START y dos veces
-            # (UDP). El robot no lo guarda: si se reinició está en rojo, así que
-            # mandarlo en cada inicio es lo único que garantiza qué busca.
+            # Color objetivo: se envía antes del START y dos veces (UDP). El robot no
+                        # lo guarda: si se reinició está en rojo, así que enviarlo en cada
+                        # inicio es lo que garantiza qué busca.
             color = parts[3].lower() if len(parts) == 4 else None
             if color is not None:
                 if color not in ('rojo', 'verde', 'azul'):
@@ -2080,7 +2059,7 @@ class Base(object):
                     time.sleep(0.05)
                 self.log(f'[Sesión] color objetivo: {color.upper()} (enviado a todos)')
             if color is not None:
-                self.cubo.reiniciar(color)              # 24-oct: busca el cubo de ESTE color
+                self.cubo.reiniciar(color)              # busca el cubo de este color
                 self._cuboLogueado = None
             self.observer = MissionObserver(log=self.log)   # métricas limpias
             self.bdie.new_session(hx, hy, self._tlog(), color=color)   # B5: logs nuevos
@@ -2226,9 +2205,9 @@ class Base(object):
 
         if self.frameQueue is not None:
             # El centinela va al final de la cola: el grabador termina de escribir
-            # lo que quede pendiente y recién ahí suelta el archivo. Antes se
-            # drenaba la cola después de encolarlo, con lo que el drenaje podía
-            # comerse el propio centinela y dejar el .avi sin cerrar.
+            # lo que quede pendiente y recién ahí suelta el archivo. Si la cola se
+            # vaciara después de encolarlo, el vaciado podría llevarse el propio
+            # centinela y dejar el .avi sin cerrar.
             self.frameQueue.put(None)
             self.videoThread.join(timeout=10.0)
             if self.videoThread.is_alive():
@@ -2254,18 +2233,16 @@ class Base(object):
         # un número que cambia en la 3a cifra cada frame no se puede leer.
         cv2.putText(frame, f'Time: {timeLog:.1f} s', (2, 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 200, 200), 1, cv2.LINE_AA)
-        # El grabador ya no es un proceso, así que no recibe una copia implícita
-        # por pickle: comparte memoria con este loop. `resultsFrame` es el ÚNICO
-        # que se muta en el sitio (el mapa de cobertura se va pintando encima
-        # frame a frame), así que hay que congelarlo o el video mostraría la
-        # cobertura del momento de codificar, no la del cuadro. `frame` es un
-        # arreglo nuevo en cada iteración y no hace falta copiarlo.
-        # La copia se comparte con la GUI: _npToPixmap convierte y copia de
-        # inmediato, nunca se queda con el arreglo.
+        # El grabador comparte memoria con este bucle. `resultsFrame` es el único
+                # que se modifica en el sitio (el mapa de cobertura se pinta encima cuadro
+                # a cuadro), así que hay que copiarlo o el video mostraría la cobertura
+                # del momento de codificar y no la del cuadro. `frame` es un arreglo nuevo
+                # en cada iteración. La copia se comparte con la GUI: _npToPixmap la
+                # convierte y la copia de inmediato.
         mapSnapshot = resultsFrame.copy()
         if self.gui is not None:
-            # V2: la GUI ve los recuadros de cada ArUco, igual que la ventana de
-            # debug de la base. El video del log se sigue grabando sin anotar.
+            # La GUI ve los recuadros de cada ArUco, igual que la ventana de
+                        # depuración de la base. El video del registro se graba sin anotar.
             vista = frame.copy()
             if not self.simMode and getattr(self, 'arucoDetector', None) is not None:
                 try:
@@ -2539,10 +2516,10 @@ class Base(object):
                     if not robotFound:
                         name, id = peer, "-1"
 
-                    # BDI-E · B5: la telemetría tiene sus propios logs (BdieLogs/);
-                    # en el ConsoleLog serían ~15 filas por segundo con 5 robots.
-                    # LAT_PING (05-nov): el ping robot↔robot de OE3 llega a la base
-                    # porque va por broadcast; no es para ella y ensuciaría el log.
+                    # BDI-E: la telemetría tiene sus propios registros (BdieLogs/);
+                                        # en el ConsoleLog serían ~15 filas por segundo con 5 robots.
+                                        # LAT_PING (medición de latencia entre robots) llega a la base
+                                        # porque va por difusión, pero no es para ella.
                     if not message.startswith(('THINK|', 'BMAP|', 'LAT_PING|')):
                         self.addConcoleLog(timeLog, id, name, message)
 
@@ -2599,8 +2576,7 @@ class Base(object):
                     elif command == 'STATUS':
                         # Respuesta a GET_STATUS: campos 'clave:valor' separados por
                         # '|'. Se guardan crudos en el robot para que la GUI arme su
-                        # panel sin volver a parsear. Antes esta respuesta caía al log
-                        # como una línea de 300 caracteres que había que leer a ojo.
+                        # panel sin volver a analizarlos.
                         if robotFound:
                             estado = {}
                             for campo in parts[1:]:
@@ -2633,15 +2609,15 @@ class Base(object):
                     elif command in ('TGT_REQ', 'POSES', 'SESSION', 'ZC', 'LAT_PING'):
                         continue     # tráfico del enjambre o eco del propio broadcast
                     elif command == 'LAT':
-                        continue     # OE3: queda en el ConsoleLog; lo resume analisis_corrida.py
+                        continue     # queda en el ConsoleLog; lo resume analisis_corrida.py
 
                     else:
                         self.log(f'Mensaje de {name}: {message}')
             except ConnectionResetError:
                 # Windows: un sendto a un robot apagado devuelve ICMP «puerto
-                # inalcanzable» y el PRÓXIMO recvfrom lanza WinError 10054. Antes
-                # eso mataba este hilo y la base dejaba de oír a TODOS los robots
-                # sin ningún aviso (17-oct-2026, 13:58: silencio total de los tres).
+                                # inalcanzable» y el siguiente recvfrom lanza WinError 10054. Si
+                                # no se captura, el hilo muere y la base deja de oír a todos los
+                                # robots sin aviso.
                 continue
             except Exception as e:
                 import traceback
@@ -2665,17 +2641,15 @@ class Base(object):
 
         robot = self.robots[robotID]
 
-        # Reintento corto en vez de rendirse en el primer frame malo.
-        #
-        # getPose() mira SOLO la detección del frame actual, y el ArUco titila
-        # según la posición en la arena (reflejo especular del acrílico, zonas de
-        # sombra). Antes, un único frame sin detección justo cuando llegaba el
-        # pedido hacía que la base no contestara nada, y el robot se comía el
-        # timeout completo del firmware (5s) + 500ms de espera antes de reintentar.
-        # O sea que un titileo de 30ms costaba 5.5s de inmovilidad: es la causa de
-        # los robots que "quedan estáticos" en ciertas zonas (2026-07-29).
-        # Acá se espera a la próxima detección buena, que suele llegar en 1-3
-        # frames, y se responde con una pose REAL — no interpolada.
+        # Reintento corto en vez de rendirse en el primer cuadro malo.
+                #
+                # getPose() mira solo la detección del cuadro actual, y el ArUco titila
+                # según la posición en la arena (reflejos, sombras). Si un único cuadro
+                # sin detección hiciera que la base no contestara, el robot esperaría el
+                # tiempo máximo del firmware antes de reintentar, y quedaría quieto en
+                # ciertas zonas. Aquí se espera a la próxima detección buena, que suele
+                # llegar en 1 a 3 cuadros, y se responde con una pose real, no
+                # interpolada.
         deadline = time.time() + self.poseWaitTimeout
         started = time.time()
         x, y, angle = robot.getPose()
@@ -2706,19 +2680,19 @@ class Base(object):
 
     def startCongregation(self, leaderID, spacing=300.0):
         """
-        Inicia congregación con un líder designado (anillo de estacionamiento).
+                Inicia la congregación con un líder designado (anillo de
+                estacionamiento).
 
-        Endurecida (2026-07): la Base asigna los slots del anillo (2π·idx/n, el
-        mismo fan que calcula el firmware) con la misma lógica wall-safe +
-        anti-cruce que startFormation circulo, en vez del orden por ID ciego a
-        paredes:
-          - valida que TODOS los slots caen dentro del área visible (inset), y
-            aborta pidiendo centrar el líder si el anillo no cabe;
-          - asigna el slot por bearing del follower alrededor del líder, así el
-            robot que ya está a la derecha recibe el slot derecho (mínimo cruce).
-        Cambio solo en la Base: el firmware sigue calculando 2π·idx/n para cada
-        idx, no requiere reflasheo.
-        """
+                La base asigna las ranuras del anillo (2π·idx/n, el mismo abanico que
+                calcula el firmware) con la misma lógica segura contra paredes y contra
+                cruces que startFormation circulo:
+                  - avisa si alguna ranura cae fuera del área visible (margen), para
+                    centrar al líder;
+                  - asigna la ranura según el rumbo del seguidor alrededor del líder,
+                    así el robot que ya está a la derecha recibe la ranura derecha
+                    (mínimo cruce).
+                El firmware sigue calculando 2π·idx/n para cada idx.
+                """
         if leaderID not in self.robots:
             print(f"Error: Robot líder {leaderID} no encontrado")
             return
@@ -2747,22 +2721,21 @@ class Base(object):
         maxX = self.cameraResolution[1] * self.mmPixel
         maxY = self.cameraResolution[0] * self.mmPixel
         inset = 250.0
-        # AVISO, no veto: quien decide el slot es cada robot, que conoce la arena
-        # por NAV_CONFIG|ARENA y corrige el ángulo si le queda contra una pared.
-        # Además, para n==1 el firmware usa el bearing líder→robot y no este
-        # abanico, así que abortar con esta fórmula cancelaba congregaciones
-        # perfectamente viables (visto 2026-07-27).
+        # Aviso, no veto: quien decide la ranura es cada robot, que conoce la arena
+                # por NAV_CONFIG|ARENA y corrige el ángulo si le queda contra una pared.
+                # Además, para n == 1 el firmware usa el rumbo líder→robot y no este
+                # abanico, así que abortar con esta fórmula cancelaría congregaciones
+                # viables.
         if not all(inset <= sx <= maxX - inset and inset <= sy <= maxY - inset
                    for sx, sy in (slotPos(i) for i in range(n))):
             print(f'⚠ El anillo nominal (r={spacing:.0f}mm) roza los bordes con el '
                   f'líder en ({lx:.0f},{ly:.0f}); cada robot ajustará su slot. '
                   f'Para menos rodeos, acercá el líder al centro.')
 
-        # Asignación anti-cruce POR POSICIÓN: cada follower al slot LIBRE cuya
-        # posición absoluta esté más cerca (mínima distancia de viaje). Se empareja
-        # sobre las posiciones de slot (el mismo 2π·idx/n que ejecuta el firmware),
-        # no sobre bearings: comparar ángulos cruzaba si la convención de marco de
-        # la cámara difería del atan2 del firmware (visto 2026-07-23).
+        # Asignación contra cruces por posición: cada seguidor va a la ranura
+                # libre más cercana (mínima distancia de viaje). Se empareja sobre las
+                # posiciones de ranura (el mismo 2π·idx/n que ejecuta el firmware) y no
+                # sobre rumbos, que dependen de la convención de marco.
         slotXY = {idx: slotPos(idx) for idx in range(n)}
         pairs = sorted(
             (math.dist(self.robots[rid].getPose()[:2], slotXY[idx]), rid, idx)
@@ -2842,14 +2815,9 @@ class Base(object):
                 ay = (ay - math.sin(rad)) * math.sqrt(0.5)
             return k * spacing * ax, k * spacing * ay
 
-        # Validar que TODOS los slots caigan dentro de la ARENA (con margen para
-        # staging+robot). Antes el límite era cameraResolution × mmPixel, que no
-        # es ni la arena ni el FOV: es la escala del mapa de display. En el lab
-        # daba 2170x1221mm contra una arena de 2400x1750, así que el techo caía
-        # en y=971 — apenas por encima del centro (y=875) — y CUALQUIER slot
-        # colocado más arriba que un líder centrado se rechazaba. La pose real
-        # sale de solvePnP, no de esa escala: hay robots medidos en y=1594.
-        # Mismo error que en GT el 2026-07-29; ver arenaMm().
+        # Validar que todas las ranuras caigan dentro de la arena (con margen para
+                # la aproximación y el robot). El límite es la arena física (arenaMm()),
+                # no la escala del mapa de visualización, que es más pequeña.
         maxX, maxY = self.arenaMm()
         inset = 250.0
 
@@ -2886,9 +2854,7 @@ class Base(object):
                 print('⚠ La fila perpendicular no cabe — usando el eje del '
                       'heading del líder (columna)')
             elif fuera:
-                # Decir QUÉ slot falla y por cuánto. Sin esto, un rechazo por
-                # 9mm (pasó el 2026-08-05) es indistinguible de uno por medio
-                # metro, y no hay forma de saber cuánto mover al líder.
+                # Decir qué ranura falla y por cuánto, para saber cuánto mover al líder.
                 print(f'✗ La formación {shape} no cabe con el líder en '
                       f'({lx:.0f},{ly:.0f}). Arena {maxX:.0f}x{maxY:.0f}mm, '
                       f'margen {inset:.0f}mm:')
@@ -3148,9 +3114,8 @@ class Base(object):
 
         robotIP = self.robots[robotID].IP
         nominalPPR = 574.0
-        # Rango aceptado del PPR calculado: el MISMO que valida el firmware en
-        # SETPPR (100-5000). Antes era [400,800] y rechazaba robots legítimos —
-        # hay unidades cuya relación de engranes calibra por encima de 800.
+        # Rango aceptado del PPR calculado: el mismo que valida el firmware en
+                # SETPPR (100–5000).
         minPPR, maxPPR = 100.0, 5000.0
         # Avance mínimo para dar la maniobra por buena. Solo sirve para detectar
         # "no se movió" / marker perdido, y NO debe acotar el PPR: durante la

@@ -2,14 +2,14 @@
 """
 prueba_observacion.py — ¿la observación ve lo que tiene que ver?
 
-Corre misiones en el BANCO (el mismo C++ del robot y el mismo codificador de
-telemetría), las pasa por el BdieMonitor REAL de la base —que escribe los mismos
-logs que en el laboratorio— y después por el verificador fuera de línea.
+Corre misiones en el banco (el mismo C++ del robot y el mismo codificador de
+telemetría), las pasa por el BdieMonitor real de la base, que escribe los mismos
+registros que en el laboratorio, y después por el verificador fuera de línea.
 
-  O1  misiones nominales        el verificador tiene que decir PASA
+  O1  misiones nominales        el verificador debe decir PASA
   O2  caída inducida            V10 aparece, todos los vivos registran la caída
                                 y la misión se completa igual
-  O3  defectos INYECTADOS       cada verificación tiene que dispararse con su
+  O3  defectos inyectados       cada verificación debe dispararse con su
                                 defecto: una verificación que nunca falla no
                                 prueba nada
       O3a  una réplica con otra asignación de zonas         → V1
@@ -96,7 +96,7 @@ def main():
     print('O3 · defectos inyectados: cada verificación se tiene que disparar')
     s = semillas[0]
 
-    def zonas_cruzadas(t, rid, txt):              # R1 cree otra asignación
+    def zonas_cruzadas(t, rid, txt):              # el robot 1 cree otra asignación
         if rid == 1 and txt.startswith('BMAP') and t > 30:
             import re
             m = re.search(r'\|of=([^|]*)', txt)

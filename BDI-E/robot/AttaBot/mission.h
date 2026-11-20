@@ -1,42 +1,35 @@
 /*****************************************************************************
- * mission.h — El pegamento
+ * mission.h — Protocolo de mensajes y acople con el firmware
  *
- * Dos mitades muy distintas, separadas a propósito:
+ * Dos partes separadas:
  *
- *   §1 PROTOCOLO (sin Arduino).  Codifica y decodifica los seis mensajes. Es
- *      texto plano con '|' como separador, igual que el resto del firmware.
- *      Se prueba en la PC (prueba T10) porque la restricción que hay que
- *      garantizar —CINCO CAMPOS COMO MÁXIMO— es una propiedad del texto, no
- *      del robot.
+ *   §1 Protocolo (sin Arduino). Codifica y decodifica los mensajes de BDI-E:
+ *      texto plano con '|' como separador, igual que el resto del firmware, y
+ *      a lo sumo cinco campos por mensaje, que es lo que admite el analizador
+ *      de comandos del firmware (SeparateCommand en comandos.ino). La prueba
+ *      T10 verifica esa cota en la PC.
  *
- *   §2 PEGAMENTO ARDUINO (#ifdef ARDUINO).  Traduce los mensajes entrantes a
- *      eventos del agente, y las Action del agente a instructionList / nav.
- *      Es el único archivo nuevo que toca tipos del .ino.
+ *   §2 Acople con Arduino (#ifdef ARDUINO). Traduce los mensajes entrantes a
+ *      eventos del agente y las Action del agente a instrucciones de la cola
+ *      instructionList y de la navegación reactiva.
  *
- * LA RESTRICCIÓN QUE ORDENA TODO EL PROTOCOLO: SeparateCommand()
- * (AttaBot.ino:2183-2202) parte en std::array<String,5> — comando más CUATRO
- * argumentos. Todo lo que la arquitectura necesita cabe ahí, así que el parser
- * del firmware NO SE TOCA: solo se le agregan ramas. Es un hallazgo operativo,
- * no una coincidencia feliz: se diseñó el protocolo contra esa cota.
- *
- * LOS OCHO MENSAJES
+ * Mensajes:
  *   POSES|epoch|blob            base → todos   blob = "id:x:y:a;id:x:y:a;…"
- *   SESSION|START|epoch|hx|hy   base → todos   inicio y pose de la base
+ *   SESSION|START|epoch|hx|hy   base → todos   inicio y posición de la base
  *   SESSION|ABORT               base → todos   aborto de la corrida
  *   HB|id|fase|flags|seq        robot → todos  latido a 2 Hz
  *   TGT|epoch|id|x|y            robot → todos  hallazgo, difusión epidémica
- *   TGT_REQ|id                  robot → todos  petición explícita, respaldo
- *   ZC|ronda:part|id|zona|dist  robot → todos  reclamo de franja (14-oct-2026)
- *   ZA|ronda:part|id|zona|dist  robot → todos  reparto ACORDADO: el reporte
+ *   TGT_REQ|id                  robot → todos  petición explícita del hallazgo
+ *   ZC|ronda:part|id|zona|dist  robot → todos  reclamo de franja
+ *   ZA|ronda:part|id|zona|dist  robot → todos  franja acordada
  *
- * En ZC/ZA, `part` son los participantes de la ronda en hexadecimal (bit i =
- * robot i) y va pegado a la ronda con ':' —el mismo recurso que el blob de
- * POSES— para no pasar de cinco campos. `dist` son celdas desde el ancla del
- * robot hasta el centro de la franja. Ver assignment.h §REPARTO.
+ * En ZC y ZA, `part` son los participantes de la ronda en hexadecimal (bit i =
+ * robot i), unidos a la ronda con ':' para no pasar de cinco campos, y `dist`
+ * son las celdas desde el ancla del robot hasta el centro de la franja (ver
+ * «Reparto por mensajes» en assignment.h).
  *
- * NO HAY UN SOLO MENSAJE DIRIGIDO A LA BASE. La base escucha para registrar
- * métricas del informe, pero nada le habla: todo lo que cruza la frontera hacia
- * los robots son DATOS, nunca órdenes.
+ * Ningún mensaje va dirigido a la base. La base escucha para registrar
+ * métricas, pero lo que envía a los robots son datos, nunca órdenes.
  *****************************************************************************/
 #ifndef BDIE_MISSION_H
 #define BDIE_MISSION_H
@@ -52,9 +45,9 @@ namespace bdie {
  *  §1  PROTOCOLO — sin dependencias de Arduino
  *===========================================================================*/
 
-/* Cota dura del parser del firmware: comando + 4 argumentos. */
+/* Cota del protocolo: comando + 4 argumentos. */
 static const int MAX_FIELDS  = 5;
-static const int MAX_WIRE    = 128;   // muy por debajo del buffer de 255 del firmware
+static const int MAX_WIRE    = 128;   // muy por debajo del búfer de 255 B del firmware
 
 struct Wire {
     char buf[MAX_WIRE];
@@ -63,9 +56,8 @@ struct Wire {
     Wire() { buf[0] = '\0'; }
 };
 
-/* Cuenta campos separados por '|'. Es la función que hace verificable la cota:
- * si un mensaje nuevo se pasa de cinco, la prueba T10 lo detecta en la PC y no
- * en el laboratorio con cinco robots encendidos. */
+/* Cuenta campos separados por '|'. Hace verificable la cota de cinco campos
+ * en la PC (prueba T10). */
 inline int CountFields(const char* s) {
     if (!s || !*s) return 0;
     int n = 1;
@@ -114,10 +106,8 @@ inline void EncodeSessionAbort(Wire& w) {
     Finish(w);
 }
 
-/* POSES lleva el blob como UN SOLO campo y se analiza aparte. Ésa es la razón
- * por la que cinco robots caben en tres campos: el blob no se parte con '|'
- * sino con ';' y ':', que SeparateCommand no toca. Con 5 robots el paquete
- * completo mide ~79 B, muy por debajo del buffer de 255. */
+/* POSES lleva todas las poses en un solo campo, separadas con ';' y ':', que
+ * SeparateCommand no parte. Con cinco robots el paquete mide unos 79 B. */
 inline void EncodePoses(Wire& w, uint32_t epoch, const Roster& r) {
     int n = std::snprintf(w.buf, MAX_WIRE, "POSES|%lu|", (unsigned long)epoch);
     for (int i = 0; i < r.n && i < MAX_ROBOTS; ++i) {
@@ -221,8 +211,8 @@ inline bool Decode(const char* s, Decoded& d) {
     if (!std::strcmp(f[0], "POSES")) {
         d.kind  = W_POSES;
         d.epoch = (uint32_t)std::strtoul(f[1], 0, 10);
-        /* El blob se recorre sobre la cadena original: puede pasarse de los 32
-         * caracteres del campo recortado, y truncarlo perdería robots. */
+        /* El blob se recorre sobre la cadena original: puede ser más largo que los
+         * 32 caracteres del campo recortado, y truncarlo perdería robots. */
         const char* p = std::strchr(s, '|');
         if (p) p = std::strchr(p + 1, '|');
         if (p) {
@@ -248,10 +238,9 @@ inline bool Decode(const char* s, Decoded& d) {
 }
 
 /*---------------------------------------------------------------------------*
- *  Mensaje entrante → agente.  Una sola puerta de entrada, y eso importa:
- *  el banco SITL y el firmware usan EXACTAMENTE esta función, así que un
- *  defecto de interpretación del protocolo no puede existir en uno y no en el
- *  otro.
+ *  Mensaje entrante → agente. Es la única puerta de entrada, y el banco SITL
+ *  y el firmware usan esta misma función, de modo que la interpretación del
+ *  protocolo es idéntica en ambos.
  *---------------------------------------------------------------------------*/
 inline void Feed(Agent& a, const char* line, uint32_t nowMs) {
     Decoded d;
@@ -264,14 +253,14 @@ inline void Feed(Agent& a, const char* line, uint32_t nowMs) {
     case W_SESSION_START:  a.StartMission(d.x, d.y, d.epoch, nowMs);          break;
     case W_SESSION_ABORT:  a.AbortMission(nowMs);                             break;
     case W_HB:
-        /* El propio latido se ignora: llega de vuelta por el broadcast. */
+        /* El latido propio vuelve por la difusión y se ignora. */
         if (d.id != a.selfId) a.OnHeartbeat(d.id, d.phase, d.flags, d.seq, nowMs);
         break;
     case W_TGT:            a.OnTargetReport(d.epoch, d.id, d.x, d.y, nowMs);  break;
     case W_TGT_REQ:        a.Heard(d.id, nowMs); a.OnTargetRequest(d.id, nowMs); break;
     case W_ZC:
     case W_ZA:
-        /* El propio reclamo vuelve por el broadcast: OnZoneClaim lo ignora. */
+        /* El reclamo propio también vuelve por la difusión; OnZoneClaim lo ignora. */
         a.OnZoneClaim(d.epoch, d.mask, d.id, d.zone, d.dist, nowMs);
         break;
     default: break;
@@ -294,60 +283,38 @@ inline bool Emit(Agent& a, Wire& w) {
 }
 
 /*===========================================================================*
- *  §2  PEGAMENTO ARDUINO
+ *  §2  Acople con Arduino
  *
- *  Sólo esta parte conoce tipos del .ino. Va en Controller/AttaBot/ junto a los
- *  otros cinco headers; los puntos de contacto con el sketch están listados en
- *  PARCHES_11_puntos.md y son once, ninguno de ellos una reescritura.
- *
- *  LA CLAVE DEL ACOPLE Y LA RAZÓN POR LA QUE ESTO ES BARATO: instructionList ya
- *  es una cola de instrucciones que la máquina de estados consume. El agente no
- *  mueve una rueda: empuja TURN 45° y MOVE 250 mm a la MISMA cola que el
- *  firmware ya usaba. Todo lo que está del otro lado de la cola —PID,
- *  encoders, IMU, evasión— es código calibrado que no se modifica.
+ *  Solo esta parte conoce tipos del sketch. El acople es simple porque
+ *  instructionList ya es la cola de instrucciones que consume la máquina de
+ *  estados del laboratorio: el agente no mueve las ruedas, encola
+ *  instrucciones en esa misma cola. Lo que está del otro lado (PID, encoders,
+ *  IMU, evasión) no se modifica.
  *===========================================================================*/
 #ifdef ARDUINO
 
-/* Traduce una Action del agente a instrucciones del cuerpo.
+/* Traduce una Action del agente a instrucciones del cuerpo del robot.
  *
- * VERIFICADO CONTRA EL FIRMWARE REAL (AttaBot.ino, 3144 líneas, 20-sep-2026).
- * La versión anterior de esta función llamaba a `nav.Stop()` y a `StopMotors()`,
- * que NO EXISTEN: `ReactiveNav` (utils.h:826-860) expone `Start`, `Reset`,
- * `HasReached` y `HasTimedOut`, y el frenado lo hace el estado STOP del enum.
- * Escrito contra una API imaginada, esto no compilaba — y se habría descubierto
- * con cinco robots encendidos.
+ * A_GOTO_CELL y A_GOTO_MM se resuelven igual, con la navegación reactiva del
+ * laboratorio (ReactiveNav en utils.h), que ya sabe ir a un punto en mm
+ * esquivando obstáculos; solo cambia de dónde sale el punto.
  *
- * ReactiveNav ya sabe ir a un punto en mm con evasión: A_GOTO_CELL y A_GOTO_MM
- * se resuelven los dos con nav.Start(x, y), y la diferencia entre ambos es solo
- * de dónde salió el punto.
+ * Devuelve true si el robot debe frenar. Así esta función no necesita ver la
+ * variable global `state`, y la transición la decide el sketch.
  *
- * DEVUELVE true si el cuerpo tiene que FRENAR. Así esta función no necesita ver
- * la variable global `state` ni el enum RobotState, y el .ino decide la
- * transición — que es donde esa decisión pertenece.
- *
- * El umbral de llegada se fija UNA VEZ desde la base con
- * NAV_CONFIG|ARRIVAL_THRESHOLD|<mm>: RecommendedArrivalMm() dice cuánto, y con
- * celdas de 190 mm son 61 mm. Dejarlo en los 50 mm de fábrica con σ_ArUco de
- * 30 mm hace que el robot rebote alrededor del punto. */
+ * El umbral de llegada se fija una vez desde la base con
+ * NAV_CONFIG|ARRIVAL_THRESHOLD|<mm>, con el valor de RecommendedArrivalMm()
+ * (grid.h). */
 inline bool ApplyAction(const Action& act) {
     switch (act.kind) {
     case Action::A_GOTO_CELL:
     case Action::A_GOTO_MM:
-        /* La navegación de este firmware NO es "fijar una meta y andar": es un
-         * lazo de pregunta y respuesta con la base. Cada paso lo da
-         * ReactiveNavStep() (AttaBot.ino:1465), que encola
-         * TURN + WAIT + MOVE + WAIT + REQUEST_POSITION; el robot pregunta dónde
-         * está y el manejador de POSITION_RESPONSE (AttaBot.ino:2748) es el
-         * ÚNICO lugar que llama a ReactiveNavStep() para dar el paso siguiente.
-         *
-         * nav.Start() levantaba isActive SIN encolar nada, así que el primer
-         * REQUEST_POSITION nunca salía y el lazo no arrancaba. Y como la
-         * intercepción del estado WAIT exige !nav.isActive, el agente tampoco
-         * volvía a deliberar ni a emitir. Un solo error, tres síntomas.
-         *
-         * Esto replica lo que hace el manejador de GOTO del firmware original
-         * (AttaBot.ino:2699-2707), que es la forma correcta de arrancarlo.
-         * → pruebas_robot/HALLAZGO_ApplyAction_no_arranca_la_navegacion.md */
+        /* La navegación del firmware es un lazo de pregunta y respuesta con la
+         * base: cada paso lo da ReactiveNavStep() (navegacion.ino), que encola giro,
+         * espera, avance, espera y REQUEST_POSITION, y el manejador de
+         * POSITION_RESPONSE (comandos.ino) es el que llama al paso siguiente. Por eso
+         * no basta con fijar la meta: hay que encolar el primer REQUEST_POSITION,
+         * igual que hace el comando GOTO del firmware. */
         nav.goalX       = act.x;
         nav.goalY       = act.y;
         nav.pendingInit = true;
@@ -363,10 +330,10 @@ inline bool ApplyAction(const Action& act) {
     case Action::A_ABORT:
         instructionList.clear();
         nav.Reset();
-        return true;                 // ← el .ino pone state = STOP
+        return true;                 // el sketch pone state = STOP
     case Action::A_MEET:
-        /* La congregación es el MEET del laboratorio, que vive en comandos.ino:
-         * este header no lo ve. Lo dispara BdieStartMeet() en bdie.ino. */
+        /* La congregación es el MEET del laboratorio (comandos.ino); la dispara
+         * BdieStartMeet() en bdie.ino. */
         return false;
     case Action::A_NONE:
     default:
@@ -374,12 +341,9 @@ inline bool ApplyAction(const Action& act) {
     }
 }
 
-/* Difusión de los mensajes que el agente encoló.
- *
- * Usa SendMessage(robots["Broadcast"], ...) — el MISMO camino que ya usan
- * CHECK_OBSTACLE y LEADER_POSITION (AttaBot.ino:2179). No hay que implementar
- * ESP-NOW ni abrir un canal nuevo, y el destino de broadcast lo fija la base en
- * el comando CONFIG que ya existe. */
+/* Difunde los mensajes que el agente encoló, por el mismo canal de difusión
+ * UDP que usan los mensajes robot a robot del firmware. El destino de
+ * difusión lo fija la base con el comando CONFIG. */
 inline void PumpOutgoing(Agent& agent) {
     Wire w;
     while (Emit(agent, w)) {

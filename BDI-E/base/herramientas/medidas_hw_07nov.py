@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-medidas_hw_07nov.py — medidas REALES del enjambre físico sacadas de los
-registros de la sesión de campaña del 07-nov-2026 (corridas nominales).
+medidas_hw_07nov.py — medidas del enjambre físico a partir de los registros de
+la sesión de campaña del 7 de noviembre de 2026 (corridas nominales).
 
 Calcula, por corrida y en conjunto:
-  1. Ritmo de latidos (HB) que la base oye de cada robot (mismo broadcast UDP
+  1. Ritmo de latidos (HB) que la base oye de cada robot (la misma difusión UDP
      que oyen los compañeros), intervalos entre latidos y pérdida por número de
      secuencia.
-  2. Reparto de zonas en hardware: tiempo hasta el primer acuerdo, rondas,
+  2. Reparto de zonas en los robots: tiempo hasta el primer acuerdo, rondas,
      nuevo reparto tras la pérdida de un participante y comprobación de que
      ninguna franja quedó repetida ni (fuera de la ventana de detección) sin
      dueño.
-  3. Traza de razonamiento (M13): cambios de plan con el evento registrado
-     que los explica; tabla LaTeX de la corrida 2.
+  3. Traza de razonamiento (M13): cambios de plan con el evento registrado que
+     los explica, y tabla LaTeX de la corrida 2.
   4. Colisiones (M10): lo que dice la hoja de corrida.
 
 Uso (desde cualquier carpeta):
@@ -22,16 +22,16 @@ Salidas en base/herramientas/resumen_campana/:
     medidas_hw_07nov.md   resumen con todos los números
     traza_m13.tex         tabla de la traza de la corrida 2 (label tab:traza_m13)
 
-Convenciones de los registros (verificadas al escribir el script):
+Convenciones de los registros (el script las comprueba):
   * El tiempo del ConsoleLog y el `tlog` de BdieLogs comparten origen (el
-    arranque de la base): el CMD|TARGET_COLOR que manda la base queda < 1 s
-    antes del evento `sesion START`. El script lo comprueba en cada corrida.
-  * HB|id|fase|x|seq : seq crece de uno en uno desde el arranque del robot
-    (no se reinicia por sesión) -> pérdida = 1 - recibidos/esperados.
-  * `vivos` es una máscara de bits impresa en HEXADECIMAL (0x16 = robots
-    1, 2 y 4; 0x1a = 1, 3 y 4).
-  * think.csv: columnas `ev` y `tev` = último evento BDI y su instante en el
-    reloj del robot (columna `t`, ms).
+    arranque de la base): el CMD|TARGET_COLOR que envía la base queda menos de
+    1 s antes del evento `sesion START`.
+  * HB|id|fase|x|seq: seq crece de uno en uno desde el arranque del robot (no se
+    reinicia por sesión), así que pérdida = 1 − recibidos/esperados.
+  * `vivos` es una máscara de bits en hexadecimal (0x16 = robots 1, 2 y 4;
+    0x1a = 1, 3 y 4).
+  * think.csv: las columnas `ev` y `tev` son el último evento BDI y su instante
+    en el reloj del robot (columna `t`, ms).
 """
 import argparse
 import csv

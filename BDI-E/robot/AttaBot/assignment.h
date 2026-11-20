@@ -1,53 +1,26 @@
 /*****************************************************************************
- * assignment.h — Repartir la arena entre agentes que se hablan (P3)
+ * assignment.h — Reparto de la arena entre los agentes de BDI-E
  *
- * 🔁 14-oct-2026 — EL REPARTO SE ACUERDA POR MENSAJES (§REPARTO, al final).
- * Decisión del autor, con la aceptación del asesor: en un sistema multiagente
- * los agentes se hablan. Cada robot RECLAMA la franja libre más cercana; si
- * dos reclaman la misma se la queda el más cercano —a igual distancia, el de
- * menor ID— y el otro reclama la siguiente; cuando todos los reclamos de la
- * ronda están oídos y no se repiten, cada uno lo da por ACORDADO y lo reporta.
- * Una caída o una reconexión abre una ronda nueva.
+ * La arena se divide en franjas verticales, una por robot que participa en la
+ * búsqueda, y los robots acuerdan por mensajes qué franja toma cada uno
+ * (sección «Reparto por mensajes», al final): cada robot reclama la franja
+ * libre más cercana; si dos reclaman la misma, se la queda el más cercano y, a
+ * igual distancia, el de menor ID, y el otro reclama la siguiente. Cuando
+ * todos los reclamos de la ronda se han oído y ninguno se repite, cada robot
+ * da su franja por acordada y lo reporta. Una caída o una reconexión abre una
+ * ronda nueva. No hay subastador ni adjudicación.
  *
- * Y corrige un defecto de la versión anterior: «vivo» era «lo ve la cámara».
- * Un robot apagado que sigue en la arena con su ArUco visible no se daba por
- * caído nunca, su franja no se repartía y el quórum lo esperaba. Ahora vivo es
- * «lo oigo» (bdi.h, Agent::Talking).
+ * Un robot está vivo si se le oye (Agent::Talking en bdi.h), no si la cámara lo
+ * ve: un robot apagado que sigue en la arena con su marcador visible se da por
+ * caído y su franja se reparte.
  *
- * Lo de abajo hasta §REPARTO es la versión del 08-sep (conocimiento común,
- * cero mensajes). NO se borró: ComputeAssignment es el ORÁCULO de las pruebas
- * —el reparto por mensajes converge a exactamente el mismo resultado— y el
- * RESPALDO si una ronda no se acuerda al arrancar. Su texto se conserva tal
- * cual porque documenta el argumento que se evaluó.
+ * ComputeAssignment calcula el mismo reparto por conocimiento común, sin
+ * mensajes: todos los robots reciben la misma difusión de posiciones, y una
+ * función determinista sobre datos comunes da el mismo resultado en todos. Se
+ * usa como oráculo de las pruebas (el reparto por mensajes converge a su mismo
+ * resultado) y como respaldo si una ronda no se acuerda al arrancar.
  *
- * ── Versión del 08-sep-2026 ────────────────────────────────────────────────
- *
- * Ésta es la pieza donde vive el argumento de descentralización del PFG, así
- * que conviene decir la idea completa antes del código:
- *
- *     Todos los robots reciben el MISMO broadcast de poses. Comparten, por lo
- *     tanto, CONOCIMIENTO COMÚN. Y cualquier función determinista sobre
- *     conocimiento común da el mismo resultado en todos los agentes. Entonces
- *     repartir la arena no requiere negociar: requiere que los cinco corran la
- *     misma función.
- *
- * Lo que eso elimina, comparado con el Contract Net que estaba avalado en la
- * S4: el rol de subastador —que es un rol privilegiado dentro de un trabajo
- * titulado «descentralizada»—, los CFP/BID/AWARD sobre un canal sin acuse, el
- * roundTimeoutMs que depende de una latencia todavía no medida, la
- * adjudicación duplicada y el robot que llega tarde y no tiene cómo
- * reincorporarse. No se reparan esos modos de fallo: se elimina el mecanismo
- * que los tiene.
- *
- * Y la tolerancia a fallos sale gratis: si un robot deja de aparecer en el
- * broadcast, TODOS lo dan por caído en el mismo epoch y recalculan sobre el
- * conjunto reducido, llegando otra vez al mismo resultado. No hace falta
- * detectar el fallo, ni anunciarlo, ni elegir un reemplazo. Es lo que hace que
- * el experimento de fallo inducido de OE4 funcione sin mecanismo dedicado.
- *
- * SIN DEPENDENCIAS DE ARDUINO. Es, además, la pieza con la propiedad más
- * fuerte de toda la arquitectura y la que más conviene poder verificar fuera
- * del laboratorio (prueba T05).
+ * Sin dependencias de Arduino. Pruebas: pruebas_host/prueba_reparto.cpp.
  *****************************************************************************/
 #ifndef BDIE_ASSIGNMENT_H
 #define BDIE_ASSIGNMENT_H
@@ -61,22 +34,18 @@ namespace bdie {
  *---------------------------------------------------------------------------*/
 struct Pose {
     float    x = 0.0f, y = 0.0f, th = 0.0f;
-    uint32_t epoch = 0;        // epoch del último POSES en que apareció
+    uint32_t epoch = 0;        // época del último POSES en que apareció
     bool     seen  = false;    // ¿apareció alguna vez?
 };
 
 struct Roster {
     Pose     p[MAX_ROBOTS];
     int      n     = 0;        // robots nominales (IDs 0..n-1)
-    uint32_t epoch = 0;        // último epoch recibido
-    /* Vejez, EN EPOCHS DE BROADCAST, no en milisegundos locales.
-     *
-     * Esto no es un detalle de implementación: es lo que hace exacta la
-     * propiedad de acuerdo. Si la vejez se midiera con el millis() de cada
-     * ESP32, dos robots con relojes corridos declararían muerto al vecino en
-     * instantes distintos y recalcularían zonas distintas durante esa ventana.
-     * Contando epochs del mismo broadcast, los cinco cruzan el umbral en el
-     * MISMO paquete. Con POSES a 10 Hz, 30 epochs ≈ 3 s. */
+    uint32_t epoch = 0;        // última época recibida
+    /* Vejez medida en épocas de la difusión de posiciones, no en milisegundos
+     * locales. Así todos los robots cruzan el umbral con el mismo paquete aunque
+     * sus relojes difieran, y no hay ventana en que calculen repartos distintos.
+     * Con POSES a 10 Hz, 30 épocas son unos 3 s. */
     uint32_t staleEpochs = 30;
 
     void OnPose(int id, float x, float y, float th, uint32_t ep) {
@@ -92,10 +61,9 @@ struct Roster {
         return (epoch - p[id].epoch) <= staleEpochs;
     }
 
-    /* Máscara de vivos. Es la ENTRADA que congela la asignación: mientras no
-     * cambie, no se recalcula. Recalcular en cada ciclo con poses que se mueven
-     * produce robots intercambiándose zonas sin fin — defecto encontrado en
-     * simulación, no una optimización teórica. */
+    /* Máscara de vivos. Es la entrada que congela la asignación: mientras no
+     * cambie, no se recalcula. Recalcular en cada ciclo con robots que se mueven
+     * los haría intercambiarse zonas sin fin. */
     uint32_t AliveMask() const {
         uint32_t m = 0;
         for (int i = 0; i < n && i < MAX_ROBOTS; ++i) if (Alive(i)) m |= (1u << i);
@@ -124,19 +92,14 @@ struct Zone {
     int Cells() const { return Empty() ? 0 : (r1 - r0 + 1) * (c1 - c0 + 1); }
 };
 
-/* Partición regular del área útil en kz franjas verticales.
- *
- * Franjas verticales y no un mosaico porque la arena es 2500×2000 y con cinco
- * robots cada franja queda en 2 columnas × 8 filas = 16 celdas: un rectángulo
- * que se barre de arriba a abajo sin cruzar la zona del vecino. Un mosaico
- * daría zonas más cuadradas pero con más frontera compartida.
- *
- * El resto de la división entera se reparte a las franjas de la IZQUIERDA, y
- * eso es determinista: los cinco robots calculan la misma partición. */
+/* Partición regular del área útil en kz franjas verticales. Una franja se
+ * barre de arriba abajo sin cruzar la zona del vecino; un mosaico daría zonas
+ * más cuadradas pero con más frontera compartida. El resto de la división
+ * entera se reparte a las franjas de la izquierda, de forma determinista. */
 inline int Partition(const GridConfig& g, int k, Zone z[MAX_ROBOTS]) {
     int kz = k;
     if (kz < 1) kz = 1;
-    if (kz > g.cols) kz = g.cols;        // la misión fija 5 robots y 10 columnas
+    if (kz > g.cols) kz = g.cols;        // no puede haber más franjas que columnas
     if (kz > MAX_ROBOTS) kz = MAX_ROBOTS;
     const int base = g.cols / kz;
     const int rest = g.cols % kz;
@@ -166,7 +129,7 @@ inline void ZoneMask(const GridConfig& g, const Zone& z, uint8_t out[MAX_CELLS])
  *---------------------------------------------------------------------------*/
 struct Assignment {
     uint32_t mask   = 0;                  // máscara de vivos que la produjo
-    uint32_t epoch  = 0;                  // epoch de anclaje
+    uint32_t epoch  = 0;                  // época de anclaje
     int      k      = 0;                  // robots vivos
     int      kz     = 0;                  // zonas
     int      zoneOf[MAX_ROBOTS];          // zona por ID de robot, -1 si no vive
@@ -180,34 +143,21 @@ struct Assignment {
     }
 };
 
-/* Celda de anclaje de un robot.
- *
- * La asignación NO se calcula sobre coordenadas en mm, sino sobre ÍNDICES DE
- * CELDA, y esa cuantización es deliberada. Un paquete POSES perdido hace que
- * una réplica ancle sobre el siguiente paquete, ~100 ms después, en el que el
- * robot se movió unos 2 cm: en mm los costos difieren y el greedy puede
- * invertir un desempate; en celdas de 250 mm el índice es el mismo salvo que el
- * robot esté justo sobre una frontera.
- *
- * Lo que se puede afirmar, y es lo que va al informe: el acuerdo es EXACTO
- * dadas la misma máscara de vivos y las mismas celdas ancla; la cuantización
- * reduce la ventana de desacuerdo a un robot cruzando una frontera de celda en
- * el mismo epoch en que otro robot es declarado muerto. Lo que NO se puede
- * afirmar es acuerdo exacto bajo pérdida arbitraria, y no se afirma. */
+/* Celda de anclaje de un robot. La asignación se calcula sobre índices de
+ * celda y no sobre milímetros: si una réplica pierde un paquete de posiciones
+ * y ancla sobre el siguiente, el robot casi siempre sigue en la misma celda y
+ * el resultado no cambia. El acuerdo es exacto dadas la misma máscara de vivos
+ * y las mismas celdas ancla; solo puede diferir si un robot cruza una frontera
+ * de celda en la misma época en que otro se declara caído. */
 inline int AnchorCell(const GridConfig& g, const Pose& p) {
     return MmToIndexClamped(g, p.x, p.y);
 }
 
-/* Asignación greedy por costo, con desempate por ID.
- *
- * El desempate no es un detalle: sin él, dos réplicas podrían diferir por ruido
- * numérico y romper el acuerdo, que es justamente la propiedad por la que se
- * eligió este mecanismo. Con él la función es PURA —sin estado, sin mensajes,
- * sin timeouts— y el acuerdo se verifica fuera del laboratorio.
- *
- * Orden de recorrido fijo (robots ascendentes, zonas ascendentes) y comparación
- * ESTRICTA: ante empate gana el primero encontrado, que es el de menor ID y,
- * dentro de él, la zona de menor índice. */
+/* Asignación voraz por costo (distancia en celdas), con desempate por ID.
+ * El recorrido tiene orden fijo (robots ascendentes, zonas ascendentes) y la
+ * comparación es estricta: ante empate gana el de menor ID y, dentro de él, la
+ * zona de menor índice. Así la función es pura, sin estado ni mensajes, y da
+ * el mismo resultado en todas las réplicas. */
 inline Assignment ComputeAssignment(const GridConfig& g, const Roster& r) {
     Assignment a;
     int ids[MAX_ROBOTS];
@@ -241,8 +191,8 @@ inline Assignment ComputeAssignment(const GridConfig& g, const Roster& r) {
         a.zoneOf[ids[bestR]] = bestZ;
     }
 
-    /* Más robots que zonas (solo si k > cols, que la misión no produce):
-     * los sobrantes comparten zona por su posición en el orden. Determinista. */
+    /* Si hubiera más robots que zonas (k > cols), los sobrantes comparten zona
+     * según su posición en el orden. */
     for (int i = 0; i < k; ++i)
         if (!robotDone[i]) a.zoneOf[ids[i]] = i % a.kz;
 
@@ -259,12 +209,9 @@ inline bool MaybeReassign(const GridConfig& g, const Roster& r, Assignment& a) {
 }
 
 /*---------------------------------------------------------------------------*
- *  Desempate de hallazgos simultáneos
- *
- *  Si dos robots encuentran el objetivo casi a la vez, gana el descubridor de
- *  MENOR ID, criterio que todos aplican igual sobre el mismo dato. Sin esto el
- *  enjambre se parte en dos grupos congregándose en puntos distintos, que es
- *  un modo de fallo espectacular y perfectamente evitable con una comparación.
+ *  Desempate de hallazgos simultáneos: si dos robots encuentran el objetivo
+ *  casi a la vez, gana el descubridor de menor ID. Todos aplican el mismo
+ *  criterio sobre el mismo dato, y el enjambre no se parte en dos grupos.
  *---------------------------------------------------------------------------*/
 inline bool TargetClaimWins(int newOwner, int curOwner) {
     if (curOwner < 0) return true;
@@ -272,58 +219,51 @@ inline bool TargetClaimWins(int newOwner, int curOwner) {
 }
 
 /*===========================================================================*
- *  §REPARTO — el reparto de franjas acordado por mensajes (14-oct-2026)
+ *  Reparto por mensajes
  *
- *  LAS REGLAS, en el orden en que se explican en el informe:
- *
- *   1. VIVO = LO OIGO. Lo decide bdi.h (Talking): un mensaje propio del par en
- *      los últimos peerDeadMs. La cámara dice DÓNDE está cada uno, ya no SI está.
- *   2. PARTICIPANTES: los vivos que están buscando (DESPLEGAR o BUSCAR).
- *   3. RONDA. Cada vez que un robot ve cambiar el conjunto de participantes
- *      abre una ronda nueva, con número = mayor visto + 1. Quien recibe un
- *      reclamo de una ronda mayor se pasa a ella; uno de una ronda vieja se
- *      ignora, así un paquete atrasado no reabre un conflicto ya resuelto.
- *   4. ANCLA CONGELADA. Al entrar a la ronda el robot fija su celda; todos sus
- *      reclamos de esa ronda miden desde ahí. Medir desde la celda actual
- *      reintroduce el defecto que el banco ya mostró: robots intercambiándose
- *      franjas sin fin mientras se mueven.
- *   5. RECLAMO POR CERCANÍA: con k participantes, k franjas (Partition); cada
- *      uno reclama la franja LIBRE más cercana a su ancla.
- *   6. CONFLICTO: se la queda el más cercano; a igual distancia, el menor ID.
+ *   1. Vivo = se le oye: un mensaje propio del robot en los últimos peerDeadMs
+ *      (Agent::Talking en bdi.h). La cámara solo dice dónde está cada uno.
+ *   2. Participantes: los vivos que están buscando (DESPLEGAR o BUSCAR).
+ *   3. Ronda: cada vez que un robot ve cambiar el conjunto de participantes
+ *      abre una ronda nueva, numerada como la mayor vista + 1. Quien recibe un
+ *      reclamo de una ronda mayor se pasa a ella; los de rondas viejas se
+ *      ignoran, para que un paquete atrasado no reabra un conflicto resuelto.
+ *   4. Ancla congelada: al entrar a la ronda el robot fija su celda, y todos
+ *      sus reclamos de esa ronda se miden desde ahí. Medir desde la celda
+ *      actual haría que los robots se intercambiaran franjas mientras se
+ *      mueven.
+ *   5. Reclamo por cercanía: con k participantes hay k franjas (Partition), y
+ *      cada uno reclama la franja libre más cercana a su ancla.
+ *   6. Conflicto: se la queda el más cercano; a igual distancia, el menor ID.
  *      El que pierde reclama la siguiente libre más cercana.
- *   7. ACUERDO: cuando oí el reclamo de TODOS los participantes en mi misma
- *      ronda y con mi mismo conjunto, ninguna franja se repite y nada cambió
- *      durante settleMs, adopto mi franja y lo reporto (ZA).
- *   8. NADIE BLOQUEA A NADIE: mientras la ronda no se acuerda, cada robot sigue
- *      con la franja que tenía. Si no se acuerda nunca, el enjambre queda con
- *      el reparto anterior y la frontera cubre el hueco: degrada a cobertura
- *      redundante, no a parálisis.
+ *   7. Acuerdo: cuando el robot oyó el reclamo de todos los participantes en
+ *      su misma ronda y con su mismo conjunto, ninguna franja se repite y nada
+ *      cambió durante settleMs, adopta su franja y lo reporta (ZA).
+ *   8. Nadie bloquea a nadie: mientras la ronda no se acuerda, cada robot sigue
+ *      con la franja que tenía. Si no se acuerda nunca, el enjambre conserva el
+ *      reparto anterior y la búsqueda de frontera cubre el hueco.
  *
- *  POR QUÉ CONVERGE Y A QUÉ: la clave (distancia, ID) tiene un único punto
- *  fijo, y es el voraz de ComputeAssignment —mismo orden: distancia, ID e
- *  índice de franja—. El par robot–franja más cercano de todo el enjambre no
- *  pierde nunca, así que queda fijo en la primera vuelta; por inducción cada
- *  vuelta fija al menos uno más: a lo sumo k vueltas. Lo verifica
- *  pruebas_host/prueba_reparto.cpp contra ComputeAssignment como oráculo.
+ *  Convergencia: la clave (distancia, ID) tiene un único punto fijo, que es el
+ *  resultado voraz de ComputeAssignment con el mismo orden. El par
+ *  robot–franja más cercano de todo el enjambre nunca pierde y queda fijo en
+ *  la primera vuelta; por inducción, cada vuelta fija al menos uno más, así
+ *  que bastan k vueltas. Mientras la ronda se cierra hay una ventana de
+ *  desacuerdo, que se mide en el banco.
  *
- *  Lo que NO se afirma: acuerdo instantáneo bajo pérdida arbitraria. Mientras
- *  la ronda se cierra hay una ventana de desacuerdo, y se MIDE en el banco.
- *
- *  Todo lo de esta sección es puro: el estado de la ronda y los reclamos oídos
- *  entran por argumento. El Agent (bdi.h) es quien escucha, decide cuándo
- *  abrir una ronda y manda los mensajes.
+ *  Las funciones de esta sección son puras: el estado de la ronda y los
+ *  reclamos oídos entran por argumento. El Agent (bdi.h) escucha, decide
+ *  cuándo abrir una ronda y envía los mensajes.
  *===========================================================================*/
 
 inline int PopCount(uint32_t m) { int n = 0; while (m) { m &= m - 1u; ++n; } return n; }
 
-/* La clave de prioridad sobre una franja: gana la distancia menor y, a igual
- * distancia, el ID menor. Es la regla del autor («si tienen una igual, por ID
- * se reparte otra») con la cercanía delante, para que el ID solo desempate. */
+/* Prioridad sobre una franja: gana la distancia menor y, a igual distancia,
+ * el ID menor. */
 inline bool ClaimBeats(int distA, int idA, int distB, int idB) {
     return distA < distB || (distA == distB && idA < idB);
 }
 
-/* Lo último que se oyó de un par: su reclamo, con la ronda y el conjunto de
+/* Último reclamo oído de otro robot, con la ronda y el conjunto de
  * participantes con que lo hizo. */
 struct ZoneClaim {
     uint32_t rep  = 0;           // ronda
@@ -369,7 +309,7 @@ struct Reparto {
     }
 };
 
-/* ¿Algún participante de MI ronda reclama esta franja con mejor clave que yo? */
+/* ¿Algún participante de la ronda propia reclama esta franja con mejor clave? */
 inline bool FranjaTomada(const Reparto& rp, int self, int zone, int myDist) {
     for (int j = 0; j < MAX_ROBOTS; ++j) {
         if (j == self || !(rp.mask & (1u << j))) continue;
@@ -380,10 +320,10 @@ inline bool FranjaTomada(const Reparto& rp, int self, int zone, int myDist) {
     return false;
 }
 
-/* La franja que me toca reclamar: la LIBRE más cercana a mi ancla; a igual
- * distancia, la de menor índice (el mismo orden que ComputeAssignment). Si
- * todas parecen tomadas —solo con reclamos viejos, mientras la ronda se
- * asienta— reclamo la más cercana y la regla de conflicto lo resuelve. */
+/* Franja que le toca reclamar al robot: la libre más cercana a su ancla y, a
+ * igual distancia, la de menor índice (el mismo orden que ComputeAssignment).
+ * Si todas parecen tomadas, lo que solo pasa con reclamos viejos mientras la
+ * ronda se asienta, reclama la más cercana y la regla de conflicto decide. */
 inline bool ElegirFranja(const GridConfig& g, const Reparto& rp, int self,
                          int& zoneOut, int& distOut) {
     const int k = PopCount(rp.mask);
@@ -403,9 +343,10 @@ inline bool ElegirFranja(const GridConfig& g, const Reparto& rp, int self,
     return best >= 0;
 }
 
-/* ¿Puedo dar la ronda por acordada? Oí a TODOS los participantes en mi ronda y
- * con mi conjunto, y ninguna franja se repite. (El «nada cambió en settleMs»
- * lo pone el Agent, que tiene el reloj.) */
+/* ¿Se puede dar la ronda por acordada? Hay que haber oído a todos los
+ * participantes en la ronda propia y con el mismo conjunto, sin franjas
+ * repetidas. La condición de «nada cambió en settleMs» la aplica el Agent,
+ * que tiene el reloj. */
 inline bool RondaCompleta(const Reparto& rp, int self) {
     if (rp.rep == 0 || rp.zone < 0 || !(rp.mask & (1u << self))) return false;
     uint32_t usadas = 1u << rp.zone;
@@ -419,8 +360,8 @@ inline bool RondaCompleta(const Reparto& rp, int self) {
     return true;
 }
 
-/* El reparto acordado como Assignment: la misma estructura que usaban la
- * telemetría (BMAP of=) y los planes. */
+/* El reparto acordado como Assignment, la estructura que usan la telemetría
+ * (BMAP of=) y los planes. */
 inline Assignment AssignmentFromReparto(const GridConfig& g, const Reparto& rp, int self) {
     Assignment a;
     a.mask  = rp.mask;
@@ -436,9 +377,9 @@ inline Assignment AssignmentFromReparto(const GridConfig& g, const Reparto& rp, 
     return a;
 }
 
-/* La ranura de cada robot en la congregación NO se calcula acá: la calcula el
- * MEET del laboratorio (navegacion.ino MeetSlotIndex), que aplica la misma idea
- * —función determinista sobre la misma lista de vecinos— sin negociar. */
+/* La ranura de cada robot en la congregación no se calcula aquí: la calcula
+ * el MEET del laboratorio (MeetSlotIndex en navegacion.ino), con la misma idea
+ * de una función determinista sobre la misma lista de vecinos. */
 
 }  // namespace bdie
 #endif  // BDIE_ASSIGNMENT_H

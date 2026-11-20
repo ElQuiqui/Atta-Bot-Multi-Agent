@@ -1,34 +1,31 @@
-"""Detección del cubo objetivo con la cámara cenital — SOLO verdad de terreno (24-oct-2026).
+"""Detección del objetivo con la cámara cenital, solo como verdad de terreno.
 
-Para qué sirve: registrar dónde está de verdad el objeto (objetivo_real en el log
-de la sesión y en el mapa del panel) sin tener que medirlo con cinta. Con eso el
-análisis puede medir el error de ubicación reportado por el robot y cada pasada
-cerca del cubo que NO terminó en detección.
+Registra dónde está realmente el objetivo (objetivo_real en el registro de la
+sesión y en el mapa del panel), sin tener que medirlo a mano. Con eso el
+análisis puede medir el error de ubicación que reporta el robot y cada pasada
+cerca del objetivo que no terminó en detección.
 
-Lo que NO hace, a propósito: decirle a los robots dónde está. La detección del
-objetivo es local a cada robot (sensor de color + MatchColor) y el hallazgo se
-difunde entre pares; si la base se lo dijera, la misión dejaría de ser
-descentralizada y lo que se mide en el Cap. 5 sería otra cosa. Eso no se cambia
-sin una decisión del autor (y del asesor).
+No le dice a los robots dónde está el objetivo: la detección es local a cada
+robot (sensor de color + MatchColor) y el hallazgo se difunde entre ellos. Si
+la base se lo comunicara, la misión dejaría de ser descentralizada.
 
-Cómo: máscara HSV del color de la sesión → componentes conexas → filtro por área
-y forma de cuadrado (tamaño físico del cubo) → se descartan las manchas pegadas
-a un ArUco (carcasas de los robots) y las que caen fuera de la arena útil (los
-robots estacionados) → el centro pasa a mm con el mismo modelo de cámara que usa
-las poses de los robots: el detector aprende, de cada cuadro, pares (centro del
-ArUco en px → pose en mm que publicó la base) e interpola el cubo con los
-vecinos más cercanos. Así el cubo queda en EL MISMO marco que las poses del log
-—con sus particularidades—, que es lo que hace falta para decir «el robot pasó a
-X mm del cubo». Hasta que haya pares cerca, usa la escala lineal (mmPixel desde
-el ArUco de referencia). Como el cubo no se mueve, la posición se confirma con N
-cuadros seguidos y después se conserva aunque un robot lo tape.
+Método: máscara HSV del color de la sesión → componentes conexas → filtro por
+área y forma cuadrada (tamaño físico del cubo) → se descartan las manchas
+pegadas a un ArUco (carcasas de los robots) y las que caen fuera del área útil
+→ el centro pasa a mm con el mismo modelo de cámara que usan las poses de los
+robots: el detector aprende, de cada cuadro, pares (centro del ArUco en px →
+pose en mm que publicó la base). Así el objetivo queda en el mismo marco que las
+poses del registro, que es lo que hace falta para decir «el robot pasó a X mm
+del objetivo». Mientras no haya pares suficientes, usa la escala lineal
+(mmPixel del ArUco de referencia). Como el objetivo no se mueve, la posición se
+confirma con N cuadros seguidos y después se conserva aunque un robot lo tape.
 """
 import math
 import cv2
 import numpy as np
 
-# Rangos HSV de OpenCV (H 0–179). Medido el 24-oct sobre el cubo rojo en la arena:
-# H=174 S=253 V=154. Las carcasas de los robots y el piso tienen S < 120.
+# Rangos HSV de OpenCV (H 0–179). El cubo rojo en la arena da H≈174, S≈253,
+# V≈154; las carcasas de los robots y el piso tienen S < 120.
 RANGOS = {
     'rojo':  [((0, 120, 70), (10, 255, 255)), ((168, 120, 70), (179, 255, 255))],
     'verde': [((40, 100, 60), (85, 255, 255))],
@@ -61,11 +58,10 @@ class MapaPxMm:
         return len(self.m)
 
     def _ajustar(self):
-        """Homografía global px→mm con RANSAC sobre la mediana de cada celda.
-        24-oct (en vivo): el ajuste afín LOCAL con pocos vecinos extrapolaba mal
-        cuando los robots todavía no habían pasado cerca del cubo, y la posición
-        saltaba 200 mm entre lecturas. Una homografía global usa toda la arena y
-        no extrapola desde 3 puntos."""
+        """Homografía global px→mm con RANSAC sobre la mediana de cada celda. Un
+                ajuste afín local con pocos vecinos extrapola mal cuando los robots
+                todavía no pasaron cerca del objetivo; la homografía usa toda la
+                arena."""
         self._nuevos = 0
         if len(self.m) < 40:
             self.H = None
@@ -135,14 +131,13 @@ class CuboDetector:
 
     def procesar(self, frame, ref_px, mm_px, marcadores_px, arena_mm):
         """frame: BGR ya corregido (el mismo que ve detectMarkers).
-        ref_px: centro del ArUco de referencia o None. marcadores_px: centros de
-        los ArUco del cuadro (para descartar carcasas).
+                ref_px: centro del ArUco de referencia o None. marcadores_px: centros de
+                los ArUco del cuadro (para descartar carcasas).
 
-        24-oct (pedido del autor): el cubo se detecta UNA vez al principio y
-        queda fijo. Primero se confirma su posición en PÍXELES (no depende del
-        mapa px→mm, así que sirve desde el primer segundo); después ya no se
-        vuelve a buscar. La conversión a mm se hace una sola vez, cuando el
-        mapa aprendido de los robots está listo. Devuelve (x, y) mm o None."""
+                El objetivo se detecta una vez al principio y queda fijo. Primero se
+                confirma su posición en píxeles, que no depende del mapa px→mm y sirve
+                desde el primer segundo; después ya no se vuelve a buscar. Devuelve
+                (x, y) en mm, o None mientras el mapa no esté listo."""
         if self.posicion is not None and self.mapa._nuevos < 200:
             return self.posicion
         if self.px_fijo is None:
@@ -158,9 +153,8 @@ class CuboDetector:
                 return None
             self.px_fijo = self._cand
         # El píxel queda fijo; los mm se recalculan cada vez que el mapa aprendió
-        # 200 muestras nuevas. 24-oct, corrida 15:06: la primera conversión se
-        # hizo con el mapa recién nacido (pocos robots vistos, todos en un
-        # rincón) y dio (958, 233) con el cubo en ~(1140, 235): 180 mm de error.
+                # 200 muestras nuevas, porque la primera conversión, con pocos robots
+                # vistos, puede tener un error de cientos de milímetros.
         r = self.mapa.a_mm(*self.px_fijo)
         if r is None:
             return self.posicion

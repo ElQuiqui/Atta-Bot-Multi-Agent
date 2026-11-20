@@ -1,12 +1,11 @@
 /***************************************************************************************
- * utils.h - VERSIÓN COMPLETA REFACTORIZADA
- * 
- * Este archivo contiene TODAS las estructuras de datos y clases auxiliares
- * que no dependen directamente de hardware (motores, sensores, WiFi)
- * 
- * Proyecto: AttaBot - Sistema de Robot Enjambre
- * Autor: 
- * Fecha: 2025
+ * utils.h — Estructuras de datos y clases auxiliares del firmware del Atta-Bot
+ *
+ * Contiene el estado de cada subsistema (navegación, congregación, dispersión,
+ * búsqueda, obstáculos), la navegación reactiva y el EKF. Nada de esto depende
+ * directamente del hardware (motores, sensores, WiFi).
+ *
+ * Proyecto: Atta-Bot, sistema de robótica de enjambres (GIRoM, TEC).
  ***************************************************************************************/
 
 #ifndef UTILS_H
@@ -172,28 +171,27 @@ enum RobotState {
     RESUME_AFTER_EVASION,
     SEARCH_APPROACH,
     DELIBERATE          // BDI-E: el ciclo del agente corre acá.
-                        // Va AL FINAL a propósito: GET_STATUS reporta el estado
-                        // como número y meterlo en medio corre todos los demás.
+                        // Va al final a propósito: GET_STATUS reporta el estado
+                                                // como número, y ponerlo en medio corre a todos los demás.
 };
 
 
 /***************************************************************************************
- * Búsqueda semántica de objetos por color (SEARCH_OBJECT|<color>).
+ * Búsqueda de objetos por color (SEARCH_OBJECT|<color>).
  *
- * El robot patrulla con RANDOM_WALK; al detectar un obstáculo con el sensor
- * central se aproxima lento hasta el alcance del APDS9960, lee el color RGBC
- * y decide: coincide → OBJECT_FOUND y se detiene; no coincide → evade con el
- * patrón de retroceso estándar y sigue patrullando.
- * Prototipo validado en Webots (AttaBot-Sim) el 2026-07-05.
+ * El robot patrulla; al detectar un obstáculo con el sensor central se aproxima
+ * hasta el alcance del APDS9960, lee el color RGBC y decide: si coincide,
+ * OBJECT_FOUND y se detiene; si no, evade con el patrón de retroceso estándar y
+ * sigue patrullando.
  ***************************************************************************************/
 struct SearchState {
     bool active = false;
     char targetColor[12] = "";
     unsigned long approachStart = 0;
-    // Acercamiento por pasos con PID (17-oct-2026, ver StateSearchApproach)
+    // Acercamiento por pasos con PID (ver StateSearchApproach)
     int  steps = 0;               // pasos dados en este acercamiento
     int  stalls = 0;              // pasos seguidos sin que suba la proximidad
-    int  blocked = 0;             // 24-oct: pasos seguidos en que las ruedas NO avanzaron (tope físico)
+    int  blocked = 0;             // pasos seguidos en que las ruedas no avanzaron (tope físico)
     uint8_t bestProx = 0;         // mejor proximidad vista
     bool stepActive = false;      // hay un paso en curso
     unsigned long stepStart = 0;
@@ -327,11 +325,9 @@ struct CongregationState {
     float slotRadius = 300;      // mm — el anillo puede CRECER si el líder quedó
                                  // contra una pared (SafeRingSlotAngle)
     bool slotAngleSet = false;   // evita que el slot salte de lado en camino
-    // El slot de n==1 se deriva de la pose PROPIA (bearing líder→robot), así que
-    // no puede latcharse hasta tener una pose fresca de cámara. El 2026-07-27 se
-    // latcheaba con el primer LEADER_POSITION, 0.4s ANTES del primer
-    // POSITION_RESPONSE: quedaba anclado a una lectura vieja y el robot salía
-    // hacia el lado opuesto, sin recalcular nunca.
+    // La ranura de n == 1 se deriva de la pose propia (rumbo líder→robot), así que
+        // no puede fijarse hasta tener una pose fresca de la cámara; fijada con una
+        // lectura vieja, el robot saldría hacia el lado opuesto.
     bool poseFresh = false;      // hay pose de cámara posterior al CONGREGATION
     // Formación (FORMATION): "" = congregación clásica (círculo). "linea"/"cuna"
     // usan slot perpendicular al heading del líder; "circulo" = igual que la
@@ -385,17 +381,17 @@ struct CongregationState {
 /***************************************************************************************
  * Estructura: DisperseState
  * -------------------------------------------------------------------------------------
- * Dispersión de enjambre (comando DISPERSE|mm): cada robot se repele de sus
- * vecinos (recibidos por NEIGHBOR_POSITIONS, 1 Hz desde la Base) hasta tener al
- * más cercano a >= target. Port 1:1 del controller de sim validado en Webots.
- *   - target = 0  → inactivo.
- *   - Turno secuencial por id (solo salta el menor id entre los muy-cercanos) +
- *     histéresis 80mm + timeout anti-deadlock: evita la tormenta de evasiones IR
- *     y el deadlock por jitter en la frontera vistos en los E2E de sim.
- *   - dminHist: mediana de 3 lecturas para que el jitter no dispare/cancele la
- *     confirmación de settle.
- * ⚠ Constantes de arena (ARENA_*) = FOV útil del lab (2.4 x 1.55 m). Ajustar si
- *   cambia el montaje de la cámara.
+ * Dispersión del enjambre (comando DISPERSE|mm): cada robot se repele de sus
+ * vecinos (recibidos por NEIGHBOR_POSITIONS, 1 Hz desde la base) hasta tener al
+ * más cercano a una distancia de al menos target.
+ *   - target = 0 → inactivo.
+ *   - Turno secuencial por id (solo salta el de menor id entre los demasiado
+ *     cercanos), histéresis de 80 mm y tiempo máximo contra bloqueos: evitan
+ *     evasiones IR mutuas y bloqueos por ruido en la frontera.
+ *   - dminHist: mediana de tres lecturas, para que el ruido no dispare ni
+ *     cancele la confirmación de asentamiento.
+ * Las constantes ARENA_* son el campo de visión útil de la cámara del
+ * laboratorio (2,4 × 1,55 m); hay que ajustarlas si cambia el montaje.
  ***************************************************************************************/
 struct DisperseState {
     // 11 = enjambre de hasta 12 robots. Con el valor viejo (8) MEET topaba en 9
@@ -415,11 +411,10 @@ struct DisperseState {
     float  nX[MAX_NEIGHBORS];
     float  nY[MAX_NEIGHBORS];
     int    nCount = 0;
-    // Pose PROPIA tal como venía en ese mismo mensaje. La manda la Base junto a
-    // las demás; se guarda aparte porque MEET reparte los slots con el greedy de
-    // cercanía y todos los robots tienen que correrlo sobre EL MISMO barrido: si
-    // cada uno usara su robotPose para sí mismo (más fresca) y la del mensaje
-    // para los demás, dos podrían elegir el mismo slot.
+    // Pose propia tal como venía en ese mismo mensaje. MEET reparte las ranuras
+        // con un criterio voraz de cercanía, y todos los robots tienen que aplicarlo
+        // sobre el mismo mensaje: si cada uno usara su robotPose (más fresca) para sí
+        // mismo y la del mensaje para los demás, dos podrían elegir la misma ranura.
     float  selfX = 0, selfY = 0;
     bool   selfSeen = false;
 
@@ -435,8 +430,8 @@ struct DisperseState {
         selfSeen = false;
     }
 
-    // Mediana móvil de las últimas 3 dmin — espejo de sorted(hist)[len//2] del
-    // sim (len 1→valor, 2→el mayor, 3→la mediana). Filtra outliers de medición.
+    // Mediana móvil de las últimas tres dmin (con una lectura, el valor; con dos,
+        // el mayor; con tres, la mediana). Filtra valores atípicos.
     float SmoothDmin(float dmin) {
         dminHist[dminIdx] = dmin;
         dminIdx = (dminIdx + 1) % 3;
@@ -464,9 +459,9 @@ struct ObstacleState {
     bool rightObstacle = false;
     bool robotDetected = false;
     String fromRobotID = "";
-    // Negociación de paso (05-nov-2026): lo que contestó el robot que estorba en
-    // OBSTACLE_DETECTED|id|<paso>. 'Q' quieto, 'S' sigo (tiene el paso), 'C' cedo
-    // (me aparto), 0 si contestó sin tercer campo (laboratorio: esperar).
+    // Negociación de paso: lo que contestó el robot que estorba en
+        // OBSTACLE_DETECTED|id|<paso>. 'Q' quieto, 'S' sigo (tiene el paso), 'C' cedo
+        // (se aparta), 0 si contestó sin tercer campo (laboratorio: esperar).
     char robotPaso = 0;
     int obstacleSensors = 0;  // Bitmap: [left][central][right]
     
@@ -651,11 +646,10 @@ struct ReactiveNav {
     float avoidSegment      = 120;   // mm por segmento cuando hay obstáculo
     float avoidFrontAngle   = 90.0f; // grados a girar si obstáculo frontal
     float avoidSideAngle    = 35.0f; // grados de bias si obstáculo lateral
-    // Re-apuntar solo si el rumbo se desvía MÁS que esto. Tiene que quedar por
-    // ENCIMA del ruido angular de la fuente de pose: el ángulo crudo de ArUco
-    // mide σ≈3.8° (medido 2026-07-27 sobre un robot quieto), así que con el
-    // valor viejo de 5° uno de cada cuatro ciclos giraba por puro ruido —y el
-    // giro se calculaba con esa misma lectura ruidosa, metiendo error real.
+    // Reorientar solo si el rumbo se desvía más que esto. Tiene que quedar por
+        // encima del ruido angular de la fuente de pose: el ángulo crudo de ArUco
+        // tiene σ≈3,8° con el robot quieto, y con un umbral menor el robot giraría
+        // por puro ruido, calculando además el giro con esa misma lectura ruidosa.
     float realignThreshold  = 12.0f; // grados
     // Histéresis del goal: ignorar reubicaciones menores a esto. CONGREGATION
     // reescribe el goal a ~3Hz con la pose cruda del líder; sin banda muerta,
@@ -713,10 +707,9 @@ static inline void Mat3Mult(const float A[3][3], const float B[3][3], float R[3]
             R[i][j] = A[i][0] * B[0][j] + A[i][1] * B[1][j] + A[i][2] * B[2][j];
 }
 
-// Inversa de 3x3 por cofactores. Devuelve false si la matriz es singular o el
-// resultado no es finito, en vez de dividir por cero: sin este cortocircuito un
-// determinante degenerado metia NaN en P y el filtro quedaba muerto para siempre
-// (190 muestras EKF_POSE|nan de las corridas del 30-07).
+// Inversa de 3×3 por cofactores. Devuelve false si la matriz es singular o el
+// resultado no es finito, en vez de dividir por cero: un determinante
+// degenerado metería NaN en P y el filtro quedaría inutilizado.
 static inline bool Mat3Inverse(const float A[3][3], float R[3][3]) {
     float a = A[0][0], b = A[0][1], c = A[0][2];
     float d = A[1][0], e = A[1][1], f = A[1][2];
@@ -738,17 +731,14 @@ struct EKFState {
     float th = 0;         // rad
     float P[3][3] = {{0}};
 
-    // R medido sobre los logs del 30-07 con el robot quieto (n=281 muestras):
-    // el jitter del ArUco es 4.4mm RMS y 7.5mm p95, no los 30mm que se traían de
-    // la sim. Con R inflado el filtro ignoraba la cámara — la corrección se comía
-    // el 21% del error y no alcanzaba a compensar la deriva. Los outliers gruesos
-    // NO se cubren inflando R: para eso está el gate de Mahalanobis de
-    // UpdateAruco, que además sabe re-anclarse.
-    // Q es provisional: la deriva de odometría medida en los logs viejos está
-    // contaminada por el bug del REVERSE, así que hay que re-medirla con
-    // `analyze_logs.py --ekf` sobre una sesión ya con el fix.
-    static constexpr float R_POS_SIGMA   = 8.0f;    // mm — jitter ArUco medido
-    static constexpr float R_ANG_SIGMA   = 4.0f;    // grados — jitter ArUco medido
+    // R se midió con el robot quieto: el ruido del ArUco es de 4,4 mm RMS y
+        // 7,5 mm en el percentil 95. Con R inflado el filtro ignoraría la cámara y no
+        // compensaría la deriva. Los valores atípicos gruesos no se cubren inflando
+        // R: para eso está la compuerta de Mahalanobis de UpdateAruco, que además
+        // sabe volver a anclarse. Q es provisional y conviene volver a medirla con
+        // analyze_logs.py --ekf.
+    static constexpr float R_POS_SIGMA   = 8.0f;    // mm, ruido medido del ArUco
+    static constexpr float R_ANG_SIGMA   = 4.0f;    // grados, ruido medido del ArUco
     static constexpr float Q_DIST_FRAC   = 0.08f;   // fracción de d por tick
     static constexpr float Q_DIST_FLOOR  = 0.5f;    // mm por tick
     static constexpr float Q_ANG_DRIFT   = 0.15f;   // grados por tick
@@ -769,11 +759,10 @@ struct EKFState {
         return a;
     }
 
-    // Des-ancla el filtro: la próxima corrección ArUco lo re-inicializa desde
-    // cero. Necesario porque Predict() sigue integrando odometría aunque no
-    // haya correcciones (entre comandos, durante evasiones, con la nav parada),
-    // y esa deriva se acumulaba de sesión en sesión: el 2026-07-27 se midió un
-    // estado a 78m de la realidad, con y=-4289mm fuera de la arena.
+    // Desancla el filtro: la próxima corrección ArUco lo reinicializa desde cero.
+        // Hace falta porque Predict() sigue integrando odometría aunque no haya
+        // correcciones (entre comandos, durante evasiones, con la navegación parada),
+        // y esa deriva se acumularía de una sesión a otra.
     void Reset() {
         initialized = false;
         gateRejects = 0;
